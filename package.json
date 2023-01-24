@@ -1,0 +1,56 @@
+{
+  "name": "scrypted-aprilaire",
+  "version": "0.3.0",
+  "description": "Scrypted plugin for Aprilaire Home Automation",
+  "author": "nberardi",
+  "license": "MIT",
+  "scripts": {
+    "scrypted-setup-project": "scrypted-setup-project",
+    "prescrypted-setup-project": "scrypted-package-json",
+    "build": "scrypted-webpack",
+    "prepublishOnly": "NODE_ENV=production scrypted-webpack",
+    "prescrypted-vscode-launch": "scrypted-webpack",
+    "scrypted-vscode-launch": "scrypted-deploy-debug",
+    "scrypted-deploy-debug": "scrypted-deploy-debug",
+    "scrypted-debug": "scrypted-debug",
+    "scrypted-deploy": "scrypted-deploy",
+    "scrypted-readme": "scrypted-readme",
+    "scrypted-package-json": "scrypted-package-json",
+    "scrypted-webpack": "scrypted-webpack"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nberardi/scrypted-dyson.git"
+  },
+  "keywords": [
+    "scrypted",
+    "plugin",
+    "aprilaire",
+    "thermostat",
+    "humidifier",
+    "dehumidifer",
+    "purifier",
+    "freshair"
+  ],
+  "bugs": {
+    "url": "https://github.com/nberardi/scrypted-dyson/issues"
+  },
+  "homepage": "https://github.com/nberardi/scrypted-dyson#readme",
+  "scrypted": {
+    "name": "Aprilaire Plugin",
+    "type": "DeviceProvider",
+    "interfaces": [
+      "DeviceProvider",
+      "DeviceCreator",
+      "Settings"
+    ]
+  },
+  "dependencies": {
+    "@types/node": "^16.11.7",
+    "crc": "^4.3.1"
+  },
+  "devDependencies": {
+    "@scrypted/sdk": "^0.1.18",
+    "webpack-bundle-analyzer": "^4.5.0"
+  }
+}
