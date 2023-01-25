@@ -1,82 +1,36 @@
 import { createCipheriv } from "crypto";
-import { Socket } from "net";
-import crc from "crc";
-
+import EventEmitter from "events";
+import { AprilaireSocket } from "./AprilaireSocket";
+import { BasePayloadResponse } from "./Payloads/BasePayload";
+import { SyncRequest } from "./Payloads/Sync";
 
 export class AprilaireClient {
-    host: string;
-    port: number;
-    client: Socket;
-
-    connected: boolean;
-    sequence: number;
-    writeable: boolean;
+    client: AprilaireSocket;
 
     constructor(host: string, port: number) {
-        this.host = host;
-        this.port = port;
-
-        this.setupSocket();
-    }
-
-    private setupSocket() {
-        const self = this;
-        this.client = new Socket();
-
-        this.client.on("close", (hadError: boolean) => {
-            self.connected = false;
-        });
-
-        this.client.on("connect", () => {
-            self.connected = true;
-            self.writeable = true;
-        });
-
-        this.client.on("data", (data: Buffer) => {
-        });
-
-        this.client.on("drain", () => {
-            self.writeable = true;
-        });
-
-        this.client.on("end", () => {});
-
-        this.client.on("error", (err: Error) => {
-            //_LOGGER.fatal(`Error: ${error}`);
-        });
-
-        this.client.on("lookup", (err: Error, address: string, family: string | number, host: string) => {});
-
-        this.client.on("ready", () => {});
-        
-        this.client.on("timeout", () => {});
+        this.client = new AprilaireSocket(host, port);
+        this.client.responseReceived = this.clientResponseReceived;
+        this.client.connected = this.clientConnected;
+        this.client.disconnected = this.clientDisconnected
     }
 
     connect() {
-        this.client.connect({ port: this.port, host: this.host});
+        this.client.connect();
     }
 
-    private sendCommand(action: Action, domain: FunctionalDomain | number, attribute: number, data?: Buffer) {
+    clientResponseReceived(response: BasePayloadResponse) {
 
-        const header = Buffer.alloc(7);
-        header.writeUint8(1), // protocol revisoin
-        header.writeUint8(this.sequence) // message counter sequence
-        header.writeUint16BE(3 + data.byteLength); // byte count of payload
-        header.writeUint8(action); // action
-        header.writeUint8(domain); // functional domain or status code
-        header.writeUint8(attribute); // attribute being affected
-        
-        const payload = Buffer.concat([header, data], 3 + data.byteLength);
-        const payloadCrc = crc.crc8(payload); // 8-bit CRC
+    }
 
-        const frame = Buffer.alloc(payload.byteLength + 1, payload);
-        frame.writeUint8(payloadCrc);
+    clientConnected() {
+        this.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.MacAddress);
+        this.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
+        this.client.sendRequest(Action.ReadRequest, FunctionalDomain.Sensors, FunctionalDomainSensors.ControllingSensorValues);
 
-        //_LOGGER.debug(`Queuing data, sequence=${sequence}, action=${action}, functional_domain=${domain}, attribute=${attribute}`);
+        this.client.sendObjectRequest(Action.Write, new SyncRequest());
+    }
 
-        // increment sequence for next command
-        this.sequence = (this.sequence + 1) % 128;
+    clientDisconnected() {
 
-        this.client.write(frame);
     }
 }

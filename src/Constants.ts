@@ -24,3 +24,35 @@ enum FunctionalDomain {
     DebugCommands = 15,
     NAck = 16
 }
+
+enum FunctionalDomainIdentification {
+    RevisionAndModel = 1,
+    MacAddress = 2,
+    ThermostatName = 3
+}
+
+enum FunctionalDomainControl {
+    ThermstateSetpointAndModeSettings = 1,
+    IncrementSetpoint = 2,
+    DehumidificationSetpoint = 3,
+    HumidificationSetponit = 4,
+    FreshAirSetting = 5,
+    AirCleaningSetting = 6,
+    ThermostatAndIAQAvailable = 7
+} 
+
+enum FunctionalDomainStatus {
+    COS = 1,
+    Sync = 2,
+    Offline = 3,
+    ThermostatStatus = 4,
+    IAQStatus = 5,
+    ThermostatError = 6
+}
+
+enum FunctionalDomainSensors {
+    SensorValues = 1,
+    ControllingSensorValues = 2,
+    SupportModules = 3,
+    WrittenOutdoorTempValue = 4
+}

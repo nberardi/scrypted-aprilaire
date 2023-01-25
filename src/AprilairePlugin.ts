@@ -34,7 +34,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     async getCreateDeviceSettings(): Promise<Setting[]> {
         return [
             {
-                key: 'ipAddress',
+                key: 'host',
                 title: "IP Address",
                 type: "string",
                 placeholder: "192.168.1.XX",

@@ -1,3 +1,3 @@
-import { DysonPlugin } from "./DysonPlugin";
+import { AprilairePlugin } from "./AprilairePlugin";
 
-export default DysonPlugin;
+export default AprilairePlugin;

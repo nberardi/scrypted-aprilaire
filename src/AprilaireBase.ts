@@ -1,16 +1,19 @@
 import { Online, Refresh, ScryptedDeviceBase, Setting, Settings, SettingValue } from '@scrypted/sdk';
 import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
 
-
-
 export class AprilaireBase extends ScryptedDeviceBase implements Online, Settings, StorageSettingsDevice {
     storageSettings = new StorageSettings(this, {
-        ipAddress: {
+        host: {
             title: "IP Address",
-            group: 'Credentials',
             type: "string",
             placeholder: "192.168.1.XX",
             description: "The IP Address of the fan on your local network."
+        },
+       port: {
+            title: "Port",
+            type: "number",
+            placeholder: "8000",
+            description: "The port the termostat uses to communicate, typically 8000 for 8800 series, and 7000 for 6000 series thermostats."
         }
     });
 
