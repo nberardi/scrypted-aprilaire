@@ -1,5 +1,48 @@
-import { RevisionAndModelResponse, MacAddressResponse, ThermostatNameResponse, ThermostatMode, ThermostatSetpointAndModeSettingsResponse, ControllingSensorsStatusAndValueResponse, ThermostatAndIAQAvailableResponse, BasePayloadResponse, IAQStatusResponse } from ".";
-import { Action, NAckError, FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainStatus } from "../Constants";
+
+import { RevisionAndModelResponse, MacAddressResponse, ThermostatNameResponse, ThermostatSetpointAndModeSettingsResponse, ControllingSensorsStatusAndValueResponse, ThermostatAndIAQAvailableResponse, BasePayloadResponse, IAQStatusResponse } from ".";
+import { Action, FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainStatus } from "../Constants";
+
+export function parseResponse (data: Buffer) : AprilaireResponsePayload[] {
+    let response: AprilaireResponsePayload[] = [];
+
+    let workingData = data;
+    let count = 0;
+    let position = 0;
+    while(true) {
+        if (workingData.length === 0 || count > 50)
+            break;
+    
+        const { revision, sequence, length, action, domain, attribute } = decodeHeader(workingData);
+        const payload = workingData.subarray(7, 4 + length);
+        const crc = workingData[4 + length + 1];
+    
+        console.log(`position: ${position}, length: ${length}, action: ${Action[action]}, domain: ${FunctionalDomain[domain]}, attribute: ${attribute}, array: ${workingData.length}`)
+    
+        response.push(new AprilaireResponsePayload(revision, sequence, length, action, domain, attribute, payload, crc));
+
+        const nextStart = 4 + length + 1;
+        workingData = workingData.subarray(nextStart);
+    
+        position = position + nextStart;
+        count++;
+    }
+
+    return response;
+}
+
+export function decodeHeader (data: Buffer) {
+    try {
+        const revision: number = data.readUint8(0);
+        const sequence: number = data.readUint8(1);
+        const length: number = data.readUint16BE(2);
+        const action: Action = data.readUint8(4);
+        const domain: FunctionalDomain = data.readUint8(5);
+        const attribute: number = data.readUint8(6);
+        return { revision, sequence, length, action, domain, attribute };
+    } catch {
+        return { revision: 1, sequence: 0, length: 0, action: Action.None, domain: FunctionalDomain.None, attribute: 0 };
+    }
+}
 
 export class AprilaireResponsePayload {
     revision: number;
@@ -9,12 +52,9 @@ export class AprilaireResponsePayload {
     domain: FunctionalDomain;
     attribute: number;
     payload: Buffer;
+    crc: number;
 
-    constructor(data: Buffer) {
-        const { revision, sequence, length, action, domain, attribute } = this.decodeHeader(data);
-
-        const payload: Buffer = data.subarray(7, 7 + length);
-
+    constructor(revision: number, sequence: number, length: number, action: Action, domain: FunctionalDomain, attribute: number, payload: Buffer, crc: number) {
         this.revision = revision;
         this.sequence = sequence;
         this.length = length;
@@ -22,20 +62,7 @@ export class AprilaireResponsePayload {
         this.domain = domain;
         this.attribute = attribute;
         this.payload = payload;
-    }
-
-    decodeHeader (data: Buffer) {
-        try {
-            const revision: number = data.readUint8(0);
-            const sequence: number = data.readUint8(1);
-            const length: number = data.readUint16BE(2);
-            const action: Action = data.readUint8(4);
-            const domain: FunctionalDomain = data.readUint8(5);
-            const attribute: number = data.readUint8(6);
-            return { revision, sequence, length, action, domain, attribute };
-        } catch {
-            return { revision: 1, sequence: 0, length: 0, action: Action.None, domain: FunctionalDomain.None, attribute: 0 };
-        }
+        this.crc = crc;
     }
 
     toObject(): any {

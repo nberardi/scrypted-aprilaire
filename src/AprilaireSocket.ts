@@ -1,6 +1,6 @@
 import { Socket } from "net";
 import crc from "crc";
-import { AprilaireResponsePayload, BasePayloadRequest, BasePayloadResponse } from "./payloads";
+import { BasePayloadRequest, parseResponse } from "./payloads";
 import { Action, FunctionalDomain } from "./Constants";
 import EventEmitter from "events";
 
@@ -31,12 +31,12 @@ export class AprilaireSocket extends EventEmitter {
         });
 
         this.client.on("data", (data: Buffer) => {
-            console.debug(`socket data: ${data.toString("hex")}`);
+            console.debug(`socket data: ${data.toString("base64")}`);
 
-            const response = new AprilaireResponsePayload(data);
-            const payload = response.toObject();
-            
-            self.emit('response', payload);
+            parseResponse(data).forEach(element => {
+                const payload = element.toObject();
+                self.emit('response', payload);
+            });
         });
 
         this.client.on("drain", () => {

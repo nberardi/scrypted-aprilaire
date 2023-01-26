@@ -2,7 +2,6 @@ import { HumiditySensor, OnOff, TemperatureSetting, TemperatureUnit, Thermometer
 import { AprilaireBase } from './AprilaireBase';
 import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse, ControllingSensorsStatusAndValueResponse, HumiditySensorStatus, TemperatureSensorStatus, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode } from './payloads';
-import { tmpdir } from 'os';
 
 export class AprilaireThermostat extends AprilaireBase implements OnOff, TemperatureSetting, Thermometer, HumiditySensor {
     client: AprilaireClient;
