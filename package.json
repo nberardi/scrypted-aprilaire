@@ -1,6 +1,6 @@
 {
   "name": "scrypted-aprilaire",
-  "version": "0.3.0",
+  "version": "0.0.1",
   "description": "Scrypted plugin for Aprilaire Home Automation",
   "author": "nberardi",
   "license": "MIT",
@@ -29,8 +29,7 @@
     "thermostat",
     "humidifier",
     "dehumidifer",
-    "purifier",
-    "freshair"
+    "purifier"
   ],
   "bugs": {
     "url": "https://github.com/nberardi/scrypted-dyson/issues"

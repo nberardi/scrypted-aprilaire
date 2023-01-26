@@ -1,4 +1,5 @@
-import { BasePayloadResponse } from "./BasePayload";
+import { BasePayloadResponse } from ".";
+import { FunctionalDomain, FunctionalDomainIdentification } from "../Constants";
 
 export class MacAddressResponse extends BasePayloadResponse {
     macAddress: string;

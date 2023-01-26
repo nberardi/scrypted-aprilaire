@@ -1,6 +1,5 @@
-import { MacAddressResponse } from "./MacAddressResponse";
-import { RevisionAndModelResponse } from "./RevisionAndModelResponse";
-import { ThermostatNameResponse } from "./ThermostatName";
+import { RevisionAndModelResponse, MacAddressResponse, ThermostatNameResponse, ThermostatMode, ThermostatSetpointAndModeSettingsResponse, ControllingSensorsStatusAndValueResponse, ThermostatAndIAQAvailableResponse, BasePayloadResponse, IAQStatusResponse } from ".";
+import { Action, NAckError, FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainStatus } from "../Constants";
 
 export class AprilaireResponsePayload {
     revision: number;
@@ -14,7 +13,7 @@ export class AprilaireResponsePayload {
     constructor(data: Buffer) {
         const { revision, sequence, length, action, domain, attribute } = this.decodeHeader(data);
 
-        const payload: Buffer = data.subarray(7, length);
+        const payload: Buffer = data.subarray(7, 7 + length);
 
         this.revision = revision;
         this.sequence = sequence;
@@ -40,8 +39,13 @@ export class AprilaireResponsePayload {
     }
 
     toObject(): any {
-        if (this.action !== Action.ReadResponse)
-            throw Error(`Recived an unrecognized acton: ${this.action}`)
+        if (this.action !== Action.ReadResponse && this.action !== Action.COS && this.action !== Action.NAck)
+            throw Error(`Recived an unrecognized action: ${this.action}`)
+
+        if (this.action == Action.NAck) {
+            console.error(`NAck received, sequence=${this.sequence}, action=${this.action}, functional_domain=${this.domain}`);
+            throw Error(`NAck received, sequence=${this.sequence}, action=${this.action}, nack=${this.domain}`);
+        }
 
         switch(this.domain) {
             case FunctionalDomain.Identification:
@@ -53,7 +57,26 @@ export class AprilaireResponsePayload {
                     case FunctionalDomainIdentification.ThermostatName:
                         return new ThermostatNameResponse(this.payload);
                 }
+            case FunctionalDomain.Control:
+                switch(this.attribute) {
+                    case FunctionalDomainControl.ThermstateSetpointAndModeSettings:
+                        return new ThermostatSetpointAndModeSettingsResponse(this.payload);
+                    case FunctionalDomainControl.ThermostatAndIAQAvailable:
+                        return new ThermostatAndIAQAvailableResponse(this.payload);
+                }
+            case FunctionalDomain.Status: 
+                switch(this.attribute) {
+                    case FunctionalDomainStatus.IAQStatus:
+                        return new IAQStatusResponse(this.payload);
+                }
+            case FunctionalDomain.Sensors:
+                switch(this.attribute) {
+                    case FunctionalDomainSensors.ControllingSensorValues:
+                        return new ControllingSensorsStatusAndValueResponse(this.payload);
+                }
+            default:
+                console.warn(`Recived an unrecognized domain: ${this.domain} and attribute: ${this.attribute}`);
+                return new BasePayloadResponse(this.payload, this.domain, this.attribute);
         }
     }
 }
-

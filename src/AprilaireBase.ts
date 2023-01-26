@@ -1,4 +1,4 @@
-import { Online, Refresh, ScryptedDeviceBase, Setting, Settings, SettingValue } from '@scrypted/sdk';
+import { Fan, HumidityMode, Online, Refresh, ScryptedDeviceBase, Setting, Settings, SettingValue } from '@scrypted/sdk';
 import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
 
 export class AprilaireBase extends ScryptedDeviceBase implements Online, Settings, StorageSettingsDevice {

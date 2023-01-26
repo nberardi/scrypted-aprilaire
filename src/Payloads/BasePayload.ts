@@ -1,3 +1,5 @@
+import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainStatus } from "../Constants";
+
 export class BasePayloadRequest {
     domain: FunctionalDomain;
     attribute: number;

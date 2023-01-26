@@ -1,4 +1,5 @@
-import { BasePayloadRequest } from "./BasePayload";
+import { BasePayloadRequest } from ".";
+import { FunctionalDomain, FunctionalDomainStatus } from "../Constants";
 
 export class SyncRequest extends BasePayloadRequest {
     constructor() {
@@ -11,3 +12,4 @@ export class SyncRequest extends BasePayloadRequest {
         return payload;
     }
 }
+

@@ -1,36 +1,89 @@
-import { createCipheriv } from "crypto";
-import EventEmitter from "events";
+import { EventEmitter } from "events";
 import { AprilaireSocket } from "./AprilaireSocket";
-import { BasePayloadResponse } from "./Payloads/BasePayload";
-import { SyncRequest } from "./Payloads/Sync";
+import { SyncRequest, CosRequest, BasePayloadResponse, MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse, ThermostatAndIAQAvailableResponse, ControllingSensorsStatusAndValueResponse } from "./payloads";
+import { Action, FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors } from "./Constants";
 
-export class AprilaireClient {
-    client: AprilaireSocket;
+export class AprilaireClient extends EventEmitter {
+    private client: AprilaireSocket;
+    private ready: boolean = false;
+
+    name: string;
+    firmware: string;
+    hardware: string;
+    model: string;
+    mac: string; 
+    system: ThermostatAndIAQAvailableResponse;
+    sensors: ControllingSensorsStatusAndValueResponse;
 
     constructor(host: string, port: number) {
+        super();
+
         this.client = new AprilaireSocket(host, port);
-        this.client.responseReceived = this.clientResponseReceived;
-        this.client.connected = this.clientConnected;
-        this.client.disconnected = this.clientDisconnected
+    }
+
+    requestThermostatIAQAvailable() {
+        this.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
+    }
+
+    requestThermostatSetpointAndModeSettings() {
+        this.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermstateSetpointAndModeSettings);
     }
 
     connect() {
+        const self = this;
+
+        this.client.removeAllListeners();
+        this.client.once("connected", () => {
+            self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.MacAddress);
+            self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.RevisionAndModel);
+            //self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
+            self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
+            self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Sensors, FunctionalDomainSensors.ControllingSensorValues);
+            self.client.sendObjectRequest(Action.Write, new CosRequest());
+            self.client.sendObjectRequest(Action.Write, new SyncRequest());
+    
+            self.emit("connected", { client: self });
+        });
+        this.client.once("disconnected", () => {
+            self.emit("disconnected", { client: self });
+        });
+        this.client.on("response", (response: BasePayloadResponse) => {
+            this.clientResponse(response);
+        });
+
         this.client.connect();
     }
 
-    clientResponseReceived(response: BasePayloadResponse) {
-
+    disconnect() {
+        this.client.disconnect();
     }
 
-    clientConnected() {
-        this.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.MacAddress);
-        this.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
-        this.client.sendRequest(Action.ReadRequest, FunctionalDomain.Sensors, FunctionalDomainSensors.ControllingSensorValues);
+    private clientResponse(response: BasePayloadResponse) {
+        console.info(`response received: ${response?.constructor?.name}`)
 
-        this.client.sendObjectRequest(Action.Write, new SyncRequest());
-    }
+        if (response instanceof MacAddressResponse)
+            this.mac = response.macAddress;
 
-    clientDisconnected() {
+        else if (response instanceof ThermostatNameResponse)
+            this.name = response.name;
 
+        else if (response instanceof RevisionAndModelResponse) {
+            this.firmware = `${response.firmwareMajor}.${response.firmwareMinor}`;
+            this.hardware = response.hardware;
+            this.model = response.model;
+        }
+
+        else if (response instanceof ThermostatAndIAQAvailableResponse)
+            this.system = response;
+
+        else if (response instanceof ControllingSensorsStatusAndValueResponse)
+            this.sensors = response;
+
+        if (!this.ready && this.mac && this.firmware && this.system && this.sensors) {
+            this.ready = true;
+            this.emit("ready", this);
+        }
+
+        this.emit("response", response);
     }
 }
