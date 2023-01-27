@@ -6,7 +6,7 @@ export class MacAddressResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Identification, FunctionalDomainIdentification.MacAddress);
 
-        const macAddressBytes = payload.subarray(0, 5);
+        const macAddressBytes = payload.subarray(0, 6);
         this.macAddress = macAddressBytes.toString("hex");
     }
 }

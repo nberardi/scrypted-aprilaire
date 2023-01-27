@@ -1,7 +1,7 @@
 import { Socket } from "net";
 import crc from "crc";
 import { BasePayloadRequest, parseResponse } from "./payloads";
-import { Action, FunctionalDomain } from "./Constants";
+import { Action, FunctionalDomain, generateCrc } from "./Constants";
 import EventEmitter from "events";
 
 export class AprilaireSocket extends EventEmitter {
@@ -94,7 +94,7 @@ export class AprilaireSocket extends EventEmitter {
         header.writeUint8(attribute, 6); // attribute being affected
 
         const payload = Buffer.concat([header, data], header.byteLength + data.byteLength);
-        const payloadCrc = crc.crc8(payload); // 8-bit CRC
+        const payloadCrc = generateCrc(payload);
 
         const frame = Buffer.alloc(payload.byteLength + 1, payload);
         frame.writeUint8(payloadCrc, frame.byteLength - 1);

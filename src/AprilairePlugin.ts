@@ -3,18 +3,55 @@ import { DeviceProvider, ScryptedDeviceBase, Setting, Settings } from '@scrypted
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { AprilaireClient } from './AprilaireClient';
 import { AprilaireThermostat } from './AprilaireThermostat';
+import { BasePayloadResponse, ControllingSensorsStatusAndValueResponse, OutdoorSensorStatus, TemperatureSensorStatus, ThermostatInstallerSettingsResponse, WrittenOutdoorTemperatureValueRequest } from './payloads';
 
 const { deviceManager } = sdk;
 
 export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvider, DeviceCreator, Settings {
     storageSettings = new StorageSettings(this, {
+        syncOutdoorSensor: {
+            title: "Sync Outdoor Sensors",
+            type: "boolean",
+            description: "If one of your devices has an outdoor sensor, allow the value to be synced to your other thermostats that don't have outdoor sensors installed."
+        }
     });
 
     clients = new Map<string, AprilaireClient>();
     thermostats = new Map<string, AprilaireThermostat>();
+    automatedOutdoorSensors: string[] = [];
 
     constructor(nativeId?: string) {
         super(nativeId);     
+    }
+
+    private responseReceived(response: BasePayloadResponse, responseClient: AprilaireClient, self: AprilairePlugin) {
+        if (response instanceof ThermostatInstallerSettingsResponse) {
+            if (response.outdoorSensor === OutdoorSensorStatus.Automation)
+                if (this.automatedOutdoorSensors.indexOf(responseClient.mac) === -1)
+                    this.automatedOutdoorSensors.push(responseClient.mac);
+        }
+
+        if (response instanceof ControllingSensorsStatusAndValueResponse && this.storageSettings.values.syncOutdoorSensor) {
+            if (response.outdoorTemperatureStatus !== TemperatureSensorStatus.NoError)
+                return;
+
+            self.automatedOutdoorSensors.forEach(mac => {
+                if (mac !== responseClient.mac) {
+                    let request = new WrittenOutdoorTemperatureValueRequest();
+                    request.temperature = response.outdoorTemperature;
+
+                    const client = self.clients.get(mac);
+                    client.write(request);
+                }
+            });
+        }
+    }
+
+    getSettings(): Promise<Setting[]> {
+        return this.storageSettings.getSettings();
+    }
+    putSetting(key: string, value: SettingValue): Promise<void> {
+        return this.storageSettings.putSetting(key, value);
     }
 
     async getDevice(nativeId: string): Promise<AprilaireThermostat> {
@@ -25,14 +62,21 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         if (s) {
             const host = s.getItem("host");
             const port = Number(s.getItem("port"));
+            const self = this;
 
             let c = new AprilaireClient(host, port);
+            c.on("response", (response, client) => {
+                self.responseReceived(response, client, self);
+            });
+
             let d = new AprilaireThermostat(nativeId, c);
             c.connect();
             d.refresh();
 
             this.thermostats.set(nativeId, d);
             this.clients.set(nativeId, c);
+
+            return d;
         }
     }
 
@@ -70,7 +114,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                     }
                 };
 
-                if (client.system.humidification)
+                if (client.system.humidification || client.system.dehumidification)
                     d.interfaces.push(ScryptedInterface.HumiditySetting);
 
                 await deviceManager.onDeviceDiscovered(d);
@@ -87,13 +131,6 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 resolve(d.nativeId);
             });
         });
-    }
-
-    getSettings(): Promise<Setting[]> {
-        return this.storageSettings.getSettings();
-    }
-    putSetting(key: string, value: SettingValue): Promise<void> {
-        return this.storageSettings.putSetting(key, value);
     }
 
     async getCreateDeviceSettings(): Promise<Setting[]> {

@@ -1,9 +1,9 @@
-import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainStatus } from "../Constants";
+import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainSetup, FunctionalDomainStatus } from "../Constants";
 
 export class BasePayloadRequest {
     domain: FunctionalDomain;
     attribute: number;
-    constructor(domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainSensors | FunctionalDomainStatus) {
+    constructor(domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
         this.domain = domain;
         this.attribute = attribute;
     }
@@ -19,7 +19,7 @@ export class BasePayloadResponse {
     domain: FunctionalDomain;
     attribute: number;
 
-    constructor(payload: Buffer, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainSensors | FunctionalDomainStatus) {
+    constructor(payload: Buffer, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
         this.payload = payload;
         this.error = false;
 

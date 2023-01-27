@@ -9,24 +9,24 @@ export class CosRequest extends BasePayloadRequest {
     toBuffer(): Buffer {
         const payload = Buffer.from(new Uint8Array([
             1,  // Installer Thermostat Settings
-            1,  // Contractor Information
-            1,  // Air Cleaning Installer Variable
-            1,  // Humidity Control Installer Settings
-            1,  // Fresh Air Installer Settings
+            0,  // Contractor Information
+            0,  // Air Cleaning Installer Variable
+            0,  // Humidity Control Installer Settings
+            0,  // Fresh Air Installer Settings
             1,  // Thermostat Setpoint & Mode Settings
             1,  // Dehumidification Setpoint
             1,  // Humidification Setpoint
             1,  // Fresh Air Setting
             1,  // Air Cleaning Settings
             1,  // Thermostat IAQ Available
-            1,  // Schedule Settings
+            0,  // Schedule Settings
             1,  // Away Settings
-            1,  // Schedule Day
+            0,  // Schedule Day
             1,  // Schedule Hold
             1,  // Heat Blast
             1,  // Service Reminders Status
-            1,  // Alerts Status
-            1,  // Alerts Settings
+            0,  // Alerts Status
+            0,  // Alerts Settings
             1,  // Backlight Settings
             1,  // Thermostat Location & Name
             0,  // Reserved
@@ -36,7 +36,7 @@ export class CosRequest extends BasePayloadRequest {
             1,  // IAQ Status
             1,  // Model & Revision
             1,  // Support Module
-            1,  // Lockouts
+            0,  // Lockouts
         ]));
         payload.writeUInt8(1);
         return payload;

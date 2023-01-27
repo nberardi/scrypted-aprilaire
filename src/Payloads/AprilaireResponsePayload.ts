@@ -1,6 +1,7 @@
 
-import { RevisionAndModelResponse, MacAddressResponse, ThermostatNameResponse, ThermostatSetpointAndModeSettingsResponse, ControllingSensorsStatusAndValueResponse, ThermostatAndIAQAvailableResponse, BasePayloadResponse, IAQStatusResponse } from ".";
-import { Action, FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainStatus } from "../Constants";
+import { RevisionAndModelResponse, MacAddressResponse, ThermostatNameResponse, ThermostatSetpointAndModeSettingsResponse, ControllingSensorsStatusAndValueResponse, ThermostatAndIAQAvailableResponse, BasePayloadResponse, IAQStatusResponse, FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse } from ".";
+import { Action, FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainSetup, FunctionalDomainStatus, generateCrc } from "../Constants";
+import { ThermostatInstallerSettingsResponse } from "./ThermostatInstallerSettings";
 
 export function parseResponse (data: Buffer) : AprilaireResponsePayload[] {
     let response: AprilaireResponsePayload[] = [];
@@ -14,8 +15,10 @@ export function parseResponse (data: Buffer) : AprilaireResponsePayload[] {
     
         const { revision, sequence, length, action, domain, attribute } = decodeHeader(workingData);
         const payload = workingData.subarray(7, 4 + length);
-        const crc = workingData[4 + length + 1];
-    
+        const crc = workingData[4 + length];
+        const crcCheck = generateCrc(workingData.subarray(0, 4 + length));
+
+        console.assert(crc === crcCheck, `failed: crc check, expecting ${crcCheck} received ${crc}`);
         console.log(`position: ${position}, length: ${length}, action: ${Action[action]}, domain: ${FunctionalDomain[domain]}, attribute: ${attribute}, array: ${workingData.length}`)
     
         response.push(new AprilaireResponsePayload(revision, sequence, length, action, domain, attribute, payload, crc));
@@ -75,6 +78,12 @@ export class AprilaireResponsePayload {
         }
 
         switch(this.domain) {
+            case FunctionalDomain.Setup:
+                switch(this.attribute) {
+                    case FunctionalDomainSetup.ThermostatInstallSettings:
+                        return new ThermostatInstallerSettingsResponse(this.payload);
+                }
+                break;
             case FunctionalDomain.Identification:
                 switch(this.attribute) {
                     case FunctionalDomainIdentification.RevisionAndModel: 
@@ -84,26 +93,38 @@ export class AprilaireResponsePayload {
                     case FunctionalDomainIdentification.ThermostatName:
                         return new ThermostatNameResponse(this.payload);
                 }
+                break;
             case FunctionalDomain.Control:
                 switch(this.attribute) {
+                    case FunctionalDomainControl.FreshAirSetting:
+                        return new FreshAirSettingsResponse(this.payload);
+                    case FunctionalDomainControl.AirCleaningSetting:
+                        return new AirCleaningSettingsResponse(this.payload);
+                    case FunctionalDomainControl.DehumidificationSetpoint:
+                        return new DehumidificationSetpointResponse(this.payload);
+                    case FunctionalDomainControl.HumidificationSetponit:
+                        return new HumidificationSetpointResponse(this.payload);
                     case FunctionalDomainControl.ThermstateSetpointAndModeSettings:
                         return new ThermostatSetpointAndModeSettingsResponse(this.payload);
                     case FunctionalDomainControl.ThermostatAndIAQAvailable:
                         return new ThermostatAndIAQAvailableResponse(this.payload);
                 }
+                break;
             case FunctionalDomain.Status: 
                 switch(this.attribute) {
                     case FunctionalDomainStatus.IAQStatus:
                         return new IAQStatusResponse(this.payload);
                 }
+                break;
             case FunctionalDomain.Sensors:
                 switch(this.attribute) {
                     case FunctionalDomainSensors.ControllingSensorValues:
                         return new ControllingSensorsStatusAndValueResponse(this.payload);
                 }
-            default:
-                console.warn(`Recived an unrecognized domain: ${this.domain} and attribute: ${this.attribute}`);
-                return new BasePayloadResponse(this.payload, this.domain, this.attribute);
+                break;
         }
+
+        console.warn(`Recived an unrecognized domain: ${this.domain} and attribute: ${this.attribute}`);
+        return new BasePayloadResponse(this.payload, this.domain, this.attribute);
     }
 }

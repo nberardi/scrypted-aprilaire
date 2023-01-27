@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import { AprilaireSocket } from "./AprilaireSocket";
-import { SyncRequest, CosRequest, BasePayloadResponse, MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse, ThermostatAndIAQAvailableResponse, ControllingSensorsStatusAndValueResponse } from "./payloads";
+import { SyncRequest, CosRequest, BasePayloadResponse, MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse, ThermostatAndIAQAvailableResponse, ControllingSensorsStatusAndValueResponse, BasePayloadRequest } from "./payloads";
 import { Action, FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors } from "./Constants";
 
 export class AprilaireClient extends EventEmitter {
@@ -29,6 +29,10 @@ export class AprilaireClient extends EventEmitter {
         this.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermstateSetpointAndModeSettings);
     }
 
+    write(request: BasePayloadRequest) {
+        this.client.sendObjectRequest(Action.Write, request);
+    }
+
     connect() {
         const self = this;
 
@@ -42,10 +46,10 @@ export class AprilaireClient extends EventEmitter {
             self.client.sendObjectRequest(Action.Write, new CosRequest());
             self.client.sendObjectRequest(Action.Write, new SyncRequest());
     
-            self.emit("connected", { client: self });
+            self.emit("connected", self);
         });
         this.client.once("disconnected", () => {
-            self.emit("disconnected", { client: self });
+            self.emit("disconnected", self);
         });
         this.client.on("response", (response: BasePayloadResponse) => {
             this.clientResponse(response);
@@ -59,7 +63,8 @@ export class AprilaireClient extends EventEmitter {
     }
 
     private clientResponse(response: BasePayloadResponse) {
-        console.info(`response received: ${response?.constructor?.name}`)
+        if (response?.constructor?.name !== "BasePayloadResponse")
+            console.info(`response received: ${response?.constructor?.name}`)
 
         if (response instanceof MacAddressResponse)
             this.mac = response.macAddress;
@@ -84,6 +89,6 @@ export class AprilaireClient extends EventEmitter {
             this.emit("ready", this);
         }
 
-        this.emit("response", response);
+        this.emit("response", response, this);
     }
 }
