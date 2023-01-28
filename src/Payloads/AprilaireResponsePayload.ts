@@ -1,7 +1,7 @@
 
-import { RevisionAndModelResponse, MacAddressResponse, ThermostatNameResponse, ThermostatSetpointAndModeSettingsResponse, ControllingSensorsStatusAndValueResponse, ThermostatAndIAQAvailableResponse, BasePayloadResponse, IAQStatusResponse, FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse, ThermostatStatusResponse } from ".";
+import { RevisionAndModelResponse, MacAddressResponse, ThermostatNameResponse, ThermostatSetpointAndModeSettingsResponse, ControllingSensorsStatusAndValueResponse, ThermostatAndIAQAvailableResponse, BasePayloadResponse, IAQStatusResponse, FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse, ThermostatStatusResponse, WrittenOutdoorTemperatureValueResponse, SyncResponse } from ".";
 import { Action, FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainSetup, FunctionalDomainStatus, generateCrc } from "../Constants";
-import { ThermostatInstallerSettingsResponse } from "./ThermostatInstallerSettings";
+import { ScaleResponse, ThermostatInstallerSettingsResponse } from "./FunctionalDomainSetup";
 
 export function parseResponse (data: Buffer) : AprilaireResponsePayload[] {
     let response: AprilaireResponsePayload[] = [];
@@ -82,6 +82,8 @@ export class AprilaireResponsePayload {
                 switch(this.attribute) {
                     case FunctionalDomainSetup.ThermostatInstallSettings:
                         return new ThermostatInstallerSettingsResponse(this.payload);
+                    case FunctionalDomainSetup.Scale:
+                        return new ScaleResponse(this.payload);
                 }
                 break;
             case FunctionalDomain.Identification:
@@ -116,12 +118,16 @@ export class AprilaireResponsePayload {
                         return new IAQStatusResponse(this.payload);
                     case FunctionalDomainStatus.ThermostatStatus:
                         return new ThermostatStatusResponse(this.payload);
+                    case FunctionalDomainStatus.Sync:
+                        return new SyncResponse(this.payload);
                 }
                 break;
             case FunctionalDomain.Sensors:
                 switch(this.attribute) {
                     case FunctionalDomainSensors.ControllingSensorValues:
                         return new ControllingSensorsStatusAndValueResponse(this.payload);
+                    case FunctionalDomainSensors.WrittenOutdoorTempValue:
+                        return new WrittenOutdoorTemperatureValueResponse(this.payload);
                 }
                 break;
         }

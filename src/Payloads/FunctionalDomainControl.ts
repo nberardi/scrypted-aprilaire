@@ -35,6 +35,34 @@ export class ThermostatSetpointAndModeSettingsRequest extends BasePayloadRequest
     }
 }
 
+export class DehumidificationSetpointRequest extends BasePayloadRequest {
+    on: boolean;
+    dehumidificationSetpoint: number;
+    constructor() {
+        super(FunctionalDomain.Control, FunctionalDomainControl.DehumidificationSetpoint);
+    }
+
+    toBuffer(): Buffer {
+        let payload = Buffer.alloc(1);
+        payload.writeUint8(this.on ? this.dehumidificationSetpoint : 0, 0)
+        return payload;
+    }
+}
+
+export class HumidificationSetpointRequest extends BasePayloadRequest {
+    on: boolean;
+    humidificationSetpoint: number;
+    constructor() {
+        super(FunctionalDomain.Control, FunctionalDomainControl.HumidificationSetponit);
+    }
+
+    toBuffer(): Buffer {
+        let payload = Buffer.alloc(1);
+        payload.writeUint8(this.on ? this.humidificationSetpoint : 0, 0)
+        return payload;
+    }
+}
+
 export class DehumidificationSetpointResponse extends BasePayloadResponse {
     on: boolean;
     dehumidificationSetpoint: number;

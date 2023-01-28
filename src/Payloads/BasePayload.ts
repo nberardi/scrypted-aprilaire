@@ -14,6 +14,8 @@ export class BasePayloadRequest {
 }
 
 export class BasePayloadResponse {
+    timestamp = Date.now;
+
     payload: Buffer;
     error: boolean;
     domain: FunctionalDomain;

@@ -1,5 +1,31 @@
-import { BasePayloadResponse } from ".";
-import { FunctionalDomain, FunctionalDomainSensors, convertByteToTemperature } from "../Constants";
+import { BasePayloadRequest, BasePayloadResponse } from ".";
+import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainSensors, convertByteToTemperature, convertTemperatureToByte } from "../Constants";
+
+export class WrittenOutdoorTemperatureValueRequest extends BasePayloadRequest {
+    status: number = 0;
+    temperature: number = 0;
+    constructor() {
+        super(FunctionalDomain.Sensors, FunctionalDomainSensors.WrittenOutdoorTempValue);
+    }
+
+    toBuffer(): Buffer {
+        let payload = Buffer.alloc(2);
+        payload.writeUint8(0, 0);
+        payload.writeUint8(this.temperature ? convertTemperatureToByte(this.temperature) : 0, 1);
+        return payload;
+    }
+}
+
+export class WrittenOutdoorTemperatureValueResponse extends BasePayloadResponse {
+    status: number = 0;
+    temperature: number = 0;
+    constructor(payload: Buffer) {
+        super(payload, FunctionalDomain.Sensors, FunctionalDomainSensors.WrittenOutdoorTempValue);
+
+        this.status = payload.readUint8(0);
+        this.temperature = convertByteToTemperature(payload.readUint8(1));
+    }
+}
 
 export class ControllingSensorsStatusAndValueResponse extends BasePayloadResponse {
     indoorTemperatureStatus: TemperatureSensorStatus;
