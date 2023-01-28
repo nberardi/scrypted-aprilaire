@@ -84,7 +84,7 @@ export class AprilaireClient extends EventEmitter {
         else if (response instanceof ControllingSensorsStatusAndValueResponse)
             this.sensors = response;
 
-        if (!this.ready && this.mac && this.firmware && this.system && this.sensors) {
+        if (!this.ready && this.mac && this.firmware && this.system && this.sensors && this.name) {
             this.ready = true;
             this.emit("ready", this);
         }

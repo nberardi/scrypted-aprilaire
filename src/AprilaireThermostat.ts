@@ -1,9 +1,9 @@
-import { HumiditySettingStatus, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode } from '@scrypted/sdk';
+import { HumiditySettingStatus, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode, Fan, FanState, FanMode, FanStatus } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
-import { BasePayloadResponse, ControllingSensorsStatusAndValueResponse, DehumidificationSetpointResponse, FanStatus, HumidificationSetpointResponse, HumiditySensorStatus, TemperatureSensorStatus, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode } from './payloads';
+import { BasePayloadResponse, ControllingSensorsStatusAndValueResponse, CoolingStatus, DehumidificationSetpointResponse, DehumidificationStatus, FanModeSetting, HeatingStatus, HumidificationSetpointResponse, HumidificationStatus, HumiditySensorStatus, IAQStatusResponse, TemperatureSensorStatus, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatStatusResponse, ThermostatMode as TMode } from './payloads';
 import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
 
-export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, Online, Settings, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySetting, HumiditySensor {
+export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, Online, Settings, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySetting, HumiditySensor, Fan {
     storageSettings = new StorageSettings(this, {
         host: {
             title: "IP Address",
@@ -35,10 +35,18 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
             availableModes: [HumidityMode.Off]
         };
 
+        this.fan = {
+            speed: 0,
+            availableModes: [FanMode.Auto, FanMode.Manual]
+        }
+
         this.client = client;
         this.client.on("response", (response: BasePayloadResponse) => {
             self.processResponse(response);
         });
+    }
+    setFan(fan: FanState): Promise<void> {
+        throw new Error('Method not implemented.');
     }
 
     setHumidity(humidity: HumidityCommand): Promise<void> {
@@ -60,12 +68,43 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
     private processResponse(response: BasePayloadResponse) {
         this.last.set(response.constructor.name, response);
 
+        let fan: FanStatus = JSON.parse(JSON.stringify(this.fan));
+        let humiditySetting: HumiditySettingStatus = JSON.parse(JSON.stringify(this.humiditySetting));
+
         if (response instanceof ControllingSensorsStatusAndValueResponse) {
             if (response.indoorTemperatureStatus === TemperatureSensorStatus.NoError)
                 this.temperature = response.indoorTemperature;
 
             if (response.indoorHumidityStatus === HumiditySensorStatus.NoError)
                 this.humidity = response.indoorHumidity;
+        }
+
+        else if (response instanceof ThermostatStatusResponse) {
+            const heating = response.heating !== HeatingStatus.NotActive && response.heating !== HeatingStatus.EquipmentWait;
+            const cooling = response.cooling !== CoolingStatus.NotActive && response.cooling !== CoolingStatus.EquipmentWait;
+
+            if (heating)
+                this.thermostatActiveMode = ThermostatMode.Heat;
+            else if (cooling)
+                this.thermostatActiveMode = ThermostatMode.Cool;
+            else
+                this.thermostatActiveMode = ThermostatMode.Off;
+
+            fan.speed = response.fan;
+        }
+
+        else if (response instanceof IAQStatusResponse) {
+            const humidification = response.humidification === HumidificationStatus.Active;
+            const dehumidification = response.dehumidification === DehumidificationStatus.WholeHomeActive || response.dehumidification === DehumidificationStatus.OvercoolingToDehumidify;
+
+            if (humidification && !dehumidification)
+                humiditySetting.activeMode = HumidityMode.Humidify;
+            else if (!humidification && dehumidification)
+                humiditySetting.activeMode = HumidityMode.Dehumidify;
+            else if (humidification && dehumidification)
+                humiditySetting.activeMode = HumidityMode.Auto;
+            else 
+                humiditySetting.activeMode = HumidityMode.Off;
         }
 
         else if (response instanceof ThermostatAndIAQAvailableResponse) {
@@ -98,44 +137,59 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
             if (response.humidification && response.dehumidification)
                 modes.push(HumidityMode.Auto);
 
-            this.humiditySetting.availableModes = modes;
+            humiditySetting.availableModes = modes;
         }
 
         else if (response instanceof HumidificationSetpointResponse) {
             this.humdifierOn = response.on;
 
             if (response.on)
-                this.humiditySetting.humidifierSetpoint = response.humidificationSetpoint;
+                humiditySetting.humidifierSetpoint = response.humidificationSetpoint;
+
+            if (this.humdifierOn && !this.dehumdifierOn)
+                humiditySetting.mode = HumidityMode.Humidify;
+            else if (!this.humdifierOn && this.dehumdifierOn)
+                humiditySetting.mode = HumidityMode.Dehumidify;
+            else if (this.humdifierOn && this.dehumdifierOn)
+                humiditySetting.mode = HumidityMode.Auto;
+            else 
+                humiditySetting.mode = HumidityMode.Off;
         }
 
         else if (response instanceof DehumidificationSetpointResponse) {
             this.dehumdifierOn = response.on;
 
             if (response.on)
-                this.humiditySetting.dehumidifierSetpoint = response.dehumidificationSetpoint;
+            humiditySetting.dehumidifierSetpoint = response.dehumidificationSetpoint;
+
+            if (this.humdifierOn && !this.dehumdifierOn)
+                humiditySetting.mode = HumidityMode.Humidify;
+            else if (!this.humdifierOn && this.dehumdifierOn)
+                humiditySetting.mode = HumidityMode.Dehumidify;
+            else if (this.humdifierOn && this.dehumdifierOn)
+                humiditySetting.mode = HumidityMode.Auto;
+            else 
+                humiditySetting.mode = HumidityMode.Off;
         }
 
         else if (response instanceof ThermostatSetpointAndModeSettingsResponse) {
             switch(response.mode) {
                 case TMode.Auto: 
                     this.on = true;
-                    this.thermostatMode = this.thermostatActiveMode = ThermostatMode.Auto;
+                    this.thermostatMode = ThermostatMode.Auto
                     break;
                 case TMode.Cool:
                     this.on = true;
-                    this.thermostatMode = this.thermostatActiveMode = ThermostatMode.Cool;
+                    this.thermostatMode = ThermostatMode.Cool
                     break;
                 case TMode.Heat:
-                    this.on = true;
-                    this.thermostatMode = this.thermostatActiveMode = ThermostatMode.Heat;
-                    break;
                 case TMode.EmergencyHeat:
                     this.on = true;
-                    this.thermostatMode = this.thermostatActiveMode = ThermostatMode.Heat;
+                    this.thermostatMode = ThermostatMode.Heat
                     break;
                 case TMode.Off:
                     this.on = false;
-                    this.thermostatMode = this.thermostatActiveMode = ThermostatMode.FanOnly;
+                    this.thermostatMode = ThermostatMode.FanOnly
                     break;
             }
 
@@ -153,16 +207,18 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
 
             this.thermostatSetpointLow = Math.max(response.coolSetpoint, response.heatSetpoint);
             this.thermostatSetpointHigh = Math.max(response.coolSetpoint, response.heatSetpoint);
+
+            fan.mode = response.fan === FanModeSetting.Auto ? FanMode.Auto : FanMode.Manual;
         }
 
-        if (this.humdifierOn && !this.dehumdifierOn)
-            this.humiditySetting.mode = this.humiditySetting.activeMode = HumidityMode.Humidify;
-        else if (!this.humdifierOn && this.dehumdifierOn)
-            this.humiditySetting.mode = this.humiditySetting.activeMode = HumidityMode.Dehumidify;
-        else if (this.humdifierOn && this.dehumdifierOn)
-            this.humiditySetting.mode = this.humiditySetting.activeMode = HumidityMode.Auto;
-        else 
-            this.humiditySetting.mode = this.humiditySetting.activeMode = HumidityMode.Off;
+        if (!this.thermostatActiveMode)
+            this.thermostatActiveMode = this.thermostatMode;
+
+        if (!humiditySetting.activeMode)
+            humiditySetting.activeMode = this.humiditySetting.mode;
+
+        this.fan = fan;
+        this.humiditySetting = humiditySetting;
     }
 
     async turnOff(): Promise<void> {

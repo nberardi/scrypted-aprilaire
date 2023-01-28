@@ -7,6 +7,6 @@ export * from "./RevisionAndModel";
 export * from "./Sync";
 export * from "./ThermostatName";
 export * from "./FunctionalDomainControl";
-export * from "./IAQStatus";
+export * from "./FunctionalDomainStatus";
 export * from "./ThermostatInstallerSettings";
 export * from "./WrittenOutdoorTemperatureValue";

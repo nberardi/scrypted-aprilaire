@@ -3,7 +3,7 @@ import { FunctionalDomain, FunctionalDomainControl, convertByteToTemperature, co
 
 export class ThermostatSetpointAndModeSettingsResponse extends BasePayloadResponse {
     mode: ThermostatMode;
-    fan: FanStatus;
+    fan: FanModeSetting;
     heatSetpoint: number;
     coolSetpoint: number;
     constructor(payload: Buffer) {
@@ -18,7 +18,7 @@ export class ThermostatSetpointAndModeSettingsResponse extends BasePayloadRespon
 
 export class ThermostatSetpointAndModeSettingsRequest extends BasePayloadRequest {
     mode: ThermostatMode = ThermostatMode.Null;
-    fan: FanStatus = FanStatus.Null;
+    fan: FanModeSetting = FanModeSetting.Null;
     heatSetpoint: number = 0;
     coolSetpoint: number = 0;
     constructor() {
@@ -28,7 +28,7 @@ export class ThermostatSetpointAndModeSettingsRequest extends BasePayloadRequest
     toBuffer(): Buffer {
         let payload = Buffer.alloc(4);
         payload.writeUint8(this.mode ?? ThermostatMode.Null, 0);
-        payload.writeUint8(this.fan ?? FanStatus.Null, 1);
+        payload.writeUint8(this.fan ?? FanModeSetting.Null, 1);
         payload.writeUint8(this.heatSetpoint ? convertTemperatureToByte(this.heatSetpoint) : 0, 2);
         payload.writeUint8(this.coolSetpoint ? convertTemperatureToByte(this.coolSetpoint) : 0, 3);
         return payload;
@@ -139,7 +139,7 @@ export enum ThermostatMode {
     Auto = 5
 }
 
-export enum FanStatus {
+export enum FanModeSetting {
     Null = 0,
     On = 1,
     Auto = 2,

@@ -81,26 +81,26 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     }
 
     async createDevice(settings: DeviceCreatorSettings): Promise<string> {
-        const name = settings.name.toString();
         const host = settings.host.toString();
         const port = Number(settings.port);
         const client = new AprilaireClient(host, port);
 
         const self = this;
 
-        return new Promise<string>((resolve, reject) => {
+        return new Promise<string>((resolve) => {
             client.connect();
             client.once("ready", async () => {
 
                 const d: Device = {
                     providerNativeId: self.nativeId,
-                    name: name,
+                    name: client.name,
                     type: ScryptedDeviceType.Thermostat,
                     nativeId: client.mac,
                     interfaces: [
                         ScryptedInterface.TemperatureSetting,
                         ScryptedInterface.Thermometer,
                         ScryptedInterface.HumiditySensor,
+                        ScryptedInterface.Fan,
                         ScryptedInterface.OnOff,
                         ScryptedInterface.Online,
                         ScryptedInterface.Settings
@@ -135,13 +135,6 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
 
     async getCreateDeviceSettings(): Promise<Setting[]> {
         return [
-            {
-                key: 'name',
-                title: "Name",
-                type: "string",
-                placeholder: "Main Floor",
-                description: "The name you would like to provide your thermostat."
-            },
             {
                 key: 'host',
                 title: "IP Address",

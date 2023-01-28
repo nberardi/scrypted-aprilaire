@@ -1,5 +1,5 @@
 
-import { RevisionAndModelResponse, MacAddressResponse, ThermostatNameResponse, ThermostatSetpointAndModeSettingsResponse, ControllingSensorsStatusAndValueResponse, ThermostatAndIAQAvailableResponse, BasePayloadResponse, IAQStatusResponse, FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse } from ".";
+import { RevisionAndModelResponse, MacAddressResponse, ThermostatNameResponse, ThermostatSetpointAndModeSettingsResponse, ControllingSensorsStatusAndValueResponse, ThermostatAndIAQAvailableResponse, BasePayloadResponse, IAQStatusResponse, FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse, ThermostatStatusResponse } from ".";
 import { Action, FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainSetup, FunctionalDomainStatus, generateCrc } from "../Constants";
 import { ThermostatInstallerSettingsResponse } from "./ThermostatInstallerSettings";
 
@@ -114,6 +114,8 @@ export class AprilaireResponsePayload {
                 switch(this.attribute) {
                     case FunctionalDomainStatus.IAQStatus:
                         return new IAQStatusResponse(this.payload);
+                    case FunctionalDomainStatus.ThermostatStatus:
+                        return new ThermostatStatusResponse(this.payload);
                 }
                 break;
             case FunctionalDomain.Sensors:
