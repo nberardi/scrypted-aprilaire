@@ -1,5 +1,5 @@
-import { BasePayloadRequest, BasePayloadResponse } from ".";
 import { FunctionalDomain, FunctionalDomainControl, convertByteToTemperature, convertTemperatureToByte } from "../Constants";
+import { BasePayloadResponse, BasePayloadRequest } from "./BasePayload";
 
 export class ThermostatSetpointAndModeSettingsResponse extends BasePayloadResponse {
     mode: ThermostatMode;

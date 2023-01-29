@@ -1,5 +1,5 @@
-import { BasePayloadRequest, BasePayloadResponse } from ".";
 import { FunctionalDomain, FunctionalDomainStatus } from "../Constants";
+import { BasePayloadRequest, BasePayloadResponse } from "./BasePayload";
 
 export class CosRequest extends BasePayloadRequest {
     constructor() {

@@ -1,5 +1,5 @@
-import { BasePayloadRequest, BasePayloadResponse } from ".";
-import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainSensors, convertByteToTemperature, convertTemperatureToByte } from "../Constants";
+import { FunctionalDomain, FunctionalDomainSensors, convertByteToTemperature, convertTemperatureToByte } from "../Constants";
+import { BasePayloadRequest, BasePayloadResponse } from "./BasePayload";
 
 export class WrittenOutdoorTemperatureValueRequest extends BasePayloadRequest {
     status: number = 0;

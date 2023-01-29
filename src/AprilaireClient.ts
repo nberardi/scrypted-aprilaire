@@ -1,7 +1,12 @@
 import { EventEmitter } from "events";
-import { SyncRequest, CosRequest, BasePayloadResponse, MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse, ThermostatAndIAQAvailableResponse, ControllingSensorsStatusAndValueResponse, BasePayloadRequest, parseResponse } from "./payloads";
 import { Action, FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, generateCrc } from "./Constants";
 import { Socket } from "node:net";
+import { parseResponse } from "./payloads/AprilaireResponsePayload";
+import { BasePayloadRequest, BasePayloadResponse } from "./payloads/BasePayload";
+import { ThermostatAndIAQAvailableResponse } from "./payloads/FunctionalDomainControl";
+import { MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse } from "./payloads/FunctionalDomainIdentification";
+import { ControllingSensorsStatusAndValueResponse } from "./payloads/FunctionalDomainSensors";
+import { CosRequest, SyncRequest } from "./payloads/FunctionalDomainStatus";
 
 export class AprilaireClient extends EventEmitter {
     private client: AprilaireSocket;

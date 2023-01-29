@@ -1,7 +1,11 @@
 import { HumiditySettingStatus, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode, Fan, FanState, FanMode, FanStatus } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
-import { BasePayloadResponse, ControllingSensorsStatusAndValueResponse, CoolingStatus, DehumidificationSetpointRequest, DehumidificationSetpointResponse, DehumidificationStatus, FanModeSetting, HeatingStatus, HumidificationSetpointRequest, HumidificationSetpointResponse, HumidificationStatus, HumiditySensorStatus, IAQStatusResponse, ScaleRequest, ScaleResponse, TemperatureScale, TemperatureSensorStatus, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, ThermostatInstallerSettingsResponse, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatStatusResponse, ThermostatMode as TMode } from './payloads';
 import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
+import { BasePayloadResponse } from './payloads/BasePayload';
+import { ThermostatSetpointAndModeSettingsRequest, FanModeSetting, DehumidificationSetpointRequest, HumidificationSetpointRequest, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, HumidificationSetpointResponse, DehumidificationSetpointResponse, ThermostatSetpointAndModeSettingsResponse } from './payloads/FunctionalDomainControl';
+import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus } from './payloads/FunctionalDomainSensors';
+import { ScaleRequest, TemperatureScale, ScaleResponse, ThermostatInstallerSettingsResponse } from './payloads/FunctionalDomainSetup';
+import { ThermostatStatusResponse, HeatingStatus, CoolingStatus, IAQStatusResponse, HumidificationStatus, DehumidificationStatus } from './payloads/FunctionalDomainStatus';
 
 export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, Online, Settings, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySetting, HumiditySensor, Fan {
     storageSettings = new StorageSettings(this, {

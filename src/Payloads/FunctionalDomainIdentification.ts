@@ -1,5 +1,5 @@
-import { BasePayloadResponse } from ".";
 import { FunctionalDomain, FunctionalDomainIdentification } from "../Constants";
+import { BasePayloadResponse } from "./BasePayload";
 
 export class ThermostatNameResponse extends BasePayloadResponse {
     postalCode: string;

@@ -1,7 +1,11 @@
+import { generateCrc, Action, FunctionalDomain, FunctionalDomainSetup, FunctionalDomainIdentification, FunctionalDomainControl, FunctionalDomainStatus, FunctionalDomainSensors } from "../Constants";
+import { BasePayloadResponse } from "./BasePayload";
+import { FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse, ThermostatSetpointAndModeSettingsResponse, ThermostatAndIAQAvailableResponse } from "./FunctionalDomainControl";
+import { RevisionAndModelResponse, MacAddressResponse, ThermostatNameResponse } from "./FunctionalDomainIdentification";
+import { ControllingSensorsStatusAndValueResponse, WrittenOutdoorTemperatureValueResponse } from "./FunctionalDomainSensors";
+import { ThermostatInstallerSettingsResponse, ScaleResponse } from "./FunctionalDomainSetup";
+import { IAQStatusResponse, ThermostatStatusResponse, SyncResponse } from "./FunctionalDomainStatus";
 
-import { RevisionAndModelResponse, MacAddressResponse, ThermostatNameResponse, ThermostatSetpointAndModeSettingsResponse, ControllingSensorsStatusAndValueResponse, ThermostatAndIAQAvailableResponse, BasePayloadResponse, IAQStatusResponse, FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse, ThermostatStatusResponse, WrittenOutdoorTemperatureValueResponse, SyncResponse } from ".";
-import { Action, FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainSetup, FunctionalDomainStatus, generateCrc } from "../Constants";
-import { ScaleResponse, ThermostatInstallerSettingsResponse } from "./FunctionalDomainSetup";
 
 export function parseResponse (data: Buffer) : AprilaireResponsePayload[] {
     let response: AprilaireResponsePayload[] = [];
