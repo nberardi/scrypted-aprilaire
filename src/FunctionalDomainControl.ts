@@ -1,5 +1,4 @@
-import { FunctionalDomain, FunctionalDomainControl, convertByteToTemperature, convertTemperatureToByte } from "../Constants";
-import { BasePayloadResponse, BasePayloadRequest } from "./BasePayload";
+import { BasePayloadResponse, FunctionalDomain, FunctionalDomainControl, convertByteToTemperature, BasePayloadRequest, convertTemperatureToByte } from "./AprilaireClient";
 
 export class ThermostatSetpointAndModeSettingsResponse extends BasePayloadResponse {
     mode: ThermostatMode;

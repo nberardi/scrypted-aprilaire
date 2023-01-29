@@ -1,11 +1,10 @@
 import sdk, { Device, DeviceCreator, DeviceCreatorSettings, ScryptedDeviceType, ScryptedInterface, SettingValue } from '@scrypted/sdk';
 import { DeviceProvider, ScryptedDeviceBase, Setting, Settings } from '@scrypted/sdk';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
-import { AprilaireClient } from './AprilaireClient';
+import { AprilaireClient, BasePayloadResponse } from './AprilaireClient';
 import { AprilaireThermostat } from './AprilaireThermostat';
-import { BasePayloadResponse } from './payloads/BasePayload';
-import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, WrittenOutdoorTemperatureValueRequest } from './payloads/FunctionalDomainSensors';
-import { ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './payloads/FunctionalDomainSetup';
+import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, WrittenOutdoorTemperatureValueRequest } from './FunctionalDomainSensors';
+import { ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
 
 const { deviceManager } = sdk;
 

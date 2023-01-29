@@ -1,5 +1,4 @@
-import { FunctionalDomain, FunctionalDomainSetup } from "../Constants";
-import { BasePayloadRequest, BasePayloadResponse } from "./BasePayload";
+import { BasePayloadResponse, FunctionalDomain, BasePayloadRequest, FunctionalDomainSetup } from "./AprilaireClient";
 
 export class ScaleRequest extends BasePayloadRequest {
     scale: TemperatureScale;
