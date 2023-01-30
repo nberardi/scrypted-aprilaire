@@ -6,6 +6,7 @@ import { BasePayloadResponse } from "./BasePayloadResponse";
 import { AprilaireThermostat } from './AprilaireThermostat';
 import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, WrittenOutdoorTemperatureValueRequest } from './FunctionalDomainSensors';
 import { ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
+import { HoldType, ScheduleHoldRequest, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 
 const { deviceManager } = sdk;
 
@@ -14,7 +15,17 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         syncOutdoorSensor: {
             title: "Sync Outdoor Sensors",
             type: "boolean",
-            description: "If one of your devices has an outdoor sensor, allow the value to be synced to your other thermostats that don't have outdoor sensors installed."
+            description: "If one of your thermostats has an outdoor sensor, allow the value to be synced to your other thermostats that don't have outdoor sensors installed."
+        },
+        syncAwayHold: {
+            title: "Sync Away Hold",
+            type: "boolean",
+            description: "If one of your thermostats is set to away, allow the hold to be synced to your other thermostats."
+        },
+        syncVacationHold: {
+            title: "Sync Vacation Hold",
+            type: "boolean",
+            description: "If one of your thermostats is set to vacation, allow the hold to be synced to your other thermostats."
         }
     });
 
@@ -33,18 +44,36 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                     this.automatedOutdoorSensors.push(responseClient.mac);
         }
 
-        if (response instanceof ControllingSensorsStatusAndValueResponse && this.storageSettings.values.syncOutdoorSensor) {
+        else if (response instanceof ScheduleHoldResponse) {
+            if ((response.hold === HoldType.Vacation && this.storageSettings.values.syncVacationHold) || (response.hold === HoldType.Away && this.storageSettings.values.syncAwayHold)) {
+                let request = new ScheduleHoldRequest();
+                request.hold = response.hold;
+                request.fan = response.fan;
+                request.heatSetpoint = response.heatSetpoint;
+                request.coolSetpoint = response.coolSetpoint;
+                request.dehumidifierSetpoint = response.dehumidifierSetpoint;
+                request.endDate = response.endDate;
+                
+                // write teh hold to the other thermostats
+                self.clients.forEach((client, mac) => {
+                    if (mac === responseClient.mac)
+                        return;
+
+                    client.write(request);
+                });
+            }
+        }
+
+        else if (response instanceof ControllingSensorsStatusAndValueResponse && this.storageSettings.values.syncOutdoorSensor) {
             if (response.outdoorTemperatureStatus !== TemperatureSensorStatus.NoError)
                 return;
 
-            self.automatedOutdoorSensors.forEach(mac => {
-                if (mac !== responseClient.mac) {
-                    let request = new WrittenOutdoorTemperatureValueRequest();
-                    request.temperature = response.outdoorTemperature;
+            self.automatedOutdoorSensors.filter(mac => mac !== responseClient.mac).forEach(mac => {
+                let request = new WrittenOutdoorTemperatureValueRequest();
+                request.temperature = response.outdoorTemperature;
 
-                    const client = self.clients.get(mac);
-                    client.write(request);
-                }
+                const client = self.clients.get(mac);
+                client.write(request);
             });
         }
     }

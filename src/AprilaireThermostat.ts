@@ -8,6 +8,7 @@ import { ScaleRequest, TemperatureScale, ScaleResponse, ThermostatInstallerSetti
 import { ThermostatStatusResponse, HeatingStatus, CoolingStatus, IAQStatusResponse, HumidificationStatus, DehumidificationStatus, SyncRequest, VentilationStatus, AirCleaningStatus } from './FunctionalDomainStatus';
 import { read } from 'fs';
 import { setEngine } from 'crypto';
+import { HeatBlastRequest, HeatBlastResponse, HoldType, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 
 export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, Online, Settings, Refresh, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySetting, HumiditySensor, Fan {
 
@@ -36,6 +37,7 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
             title: "Heat Blast",
             type: "boolean",
             description: "The thermostat is in Heat Blast mode.",
+            noStore: true,
             onPut: (oldValue, newValue) => this.setHeatBlast(newValue)
         },
         hold: {
@@ -43,6 +45,7 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
             type: "string",
             choices: ["Schedule", "Temporary", "Permanent", "Away", "Vacation"],
             description: "The type of temperature hold the thermostat is following.",
+            noStore: true,
             onPut: (oldValue, newValue) => this.setHold(newValue)
         },
         humidifierAvailable: {
@@ -97,8 +100,11 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
         }
     });
 
-    client: AprilaireClient;
-    last = new Map<string, BasePayloadResponse>();
+    private client: AprilaireClient;
+    private last = new Map<string, BasePayloadResponse>();
+
+    private _heatBlastState: boolean;
+    private _holdState: string;
 
     constructor(nativeId: string, client: AprilaireClient) {
         super(nativeId);
@@ -189,15 +195,20 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
     }
 
     setHeatBlast(newValue: any) {
-        throw new Error('Function not implemented.');
-    }
-    
-    setVacation(newValue: any) {
-        throw new Error('Function not implemented.');
+        if (newValue === this._heatBlastState)
+            return;
+
+        let request = new HeatBlastRequest();
+        request.heatBlast = Boolean(newValue);
+        this.client.write(request);
+        this._heatBlastState = request.heatBlast;
     }
     
     setHold(newValue: any) {
-        throw new Error('Function not implemented.');
+        if (newValue === this._holdState)
+            return;
+
+        this.console.error("setHold function status is work still needs to be done");
     }
 
     async setTemperatureUnit(temperatureUnit: TemperatureUnit): Promise<void> {
@@ -290,6 +301,16 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
         return this.storageSettings.putSetting(key, value);
     }
 
+    private convertHold (type: HoldType): string{
+        switch(type) {
+            case HoldType.Disabled: return this.holdSchedule;
+            case HoldType.Temporary: return this.holdTemporary;
+            case HoldType.Permanent: return this.holdPermanent;
+            case HoldType.Away: return this.holdAway;
+            case HoldType.Vacation: return this.holdVacation;
+        }
+    }
+
     private processResponse(response: BasePayloadResponse) {
         this.last.set(response.constructor.name, response);
 
@@ -298,6 +319,16 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
 
         if (response instanceof ScaleResponse) {
             this.temperatureUnit = response.scale === TemperatureScale.F ? TemperatureUnit.F : TemperatureUnit.C;
+        }
+
+        else if (response instanceof HeatBlastResponse) {
+            this._heatBlastState = this._heatBlastState ?? response.heatBlast;
+            this.storageSettings.values.heatBlast = this._heatBlastState;
+        }
+
+        else if (response instanceof ScheduleHoldResponse) {
+            this._holdState = this._holdState ?? this.convertHold(response.hold);
+            this.storageSettings.values.hold = this._holdState;
         }
 
         else if (response instanceof ThermostatInstallerSettingsResponse) {

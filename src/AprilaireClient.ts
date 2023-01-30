@@ -7,6 +7,7 @@ import { ThermostatInstallerSettingsResponse, ScaleResponse } from "./Functional
 import { CosRequest, IAQStatusResponse, ThermostatStatusResponse, SyncResponse } from "./FunctionalDomainStatus";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse } from "./BasePayloadResponse";
+import { HeatBlastResponse, ScheduleHoldResponse } from "./FunctionalDomainScheduling";
 
 export class AprilaireClient extends EventEmitter {
     private client: AprilaireSocket;
@@ -180,6 +181,14 @@ export enum FunctionalDomainIdentification {
     RevisionAndModel = 1,
     MacAddress = 2,
     ThermostatName = 4
+}
+
+export enum FunctionalDomainScheduling {
+    ScheduleSettings = 1,
+    AwaySettings = 2,
+    ScheduleDay = 3,
+    ScheduleHold = 4,
+    HeatBlast = 5
 }
 
 export enum FunctionalDomainControl {
@@ -573,6 +582,14 @@ export class AprilaireResponsePayload {
                         return new MacAddressResponse(this.payload);
                     case FunctionalDomainIdentification.ThermostatName:
                         return new ThermostatNameResponse(this.payload);
+                }
+                break;
+            case FunctionalDomain.Scheduling:
+                switch(this.attribute) {
+                    case FunctionalDomainScheduling.ScheduleHold:
+                        return new ScheduleHoldResponse(this.payload);
+                    case FunctionalDomainScheduling.HeatBlast:
+                        return new HeatBlastResponse(this.payload);
                 }
                 break;
             case FunctionalDomain.Control:

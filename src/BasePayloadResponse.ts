@@ -1,4 +1,4 @@
-import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainStatus, FunctionalDomainSetup } from "./AprilaireClient";
+import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainStatus, FunctionalDomainSetup, FunctionalDomainScheduling } from "./AprilaireClient";
 
 
 export class BasePayloadResponse {
@@ -9,7 +9,7 @@ export class BasePayloadResponse {
     domain: FunctionalDomain;
     attribute: number;
 
-    constructor(payload: Buffer, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
+    constructor(payload: Buffer, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
         this.payload = payload;
         this.error = false;
 
