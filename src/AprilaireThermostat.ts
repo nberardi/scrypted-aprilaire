@@ -122,7 +122,7 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
     }
 
     async getRefreshFrequency(): Promise<number> {
-        return 300; // every 5 mins
+        return 600; // every 10 mins
     }
 
     async sync(): Promise<void> {
