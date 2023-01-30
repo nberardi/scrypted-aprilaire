@@ -1,12 +1,24 @@
-import { HumiditySettingStatus, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode, Fan, FanState, FanMode, FanStatus } from '@scrypted/sdk';
-import { AprilaireClient, BasePayloadResponse } from './AprilaireClient';
+import { HumiditySettingStatus, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode, Fan, FanState, FanMode, FanStatus, Refresh } from '@scrypted/sdk';
+import { AprilaireClient } from './AprilaireClient';
+import { BasePayloadResponse } from "./BasePayloadResponse";
 import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
 import { ThermostatSetpointAndModeSettingsRequest, FanModeSetting, DehumidificationSetpointRequest, HumidificationSetpointRequest, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, HumidificationSetpointResponse, DehumidificationSetpointResponse, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode } from './FunctionalDomainControl';
 import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus } from './FunctionalDomainSensors';
 import { ScaleRequest, TemperatureScale, ScaleResponse, ThermostatInstallerSettingsResponse } from './FunctionalDomainSetup';
-import { ThermostatStatusResponse, HeatingStatus, CoolingStatus, IAQStatusResponse, HumidificationStatus, DehumidificationStatus } from './FunctionalDomainStatus';
+import { ThermostatStatusResponse, HeatingStatus, CoolingStatus, IAQStatusResponse, HumidificationStatus, DehumidificationStatus, SyncRequest, VentilationStatus, AirCleaningStatus } from './FunctionalDomainStatus';
+import { read } from 'fs';
+import { setEngine } from 'crypto';
 
-export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, Online, Settings, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySetting, HumiditySensor, Fan {
+export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, Online, Settings, Refresh, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySetting, HumiditySensor, Fan {
+
+    readonly deviceOn = "On";
+    readonly deviceOff = "Off";
+    readonly holdSchedule = "Schedule";
+    readonly holdTemporary = "Temporary";
+    readonly holdPermanent = "Permanent";
+    readonly holdAway = "Away";
+    readonly holdVacation = "Vacation";
+
     storageSettings = new StorageSettings(this, {
         host: {
             title: "IP Address",
@@ -19,14 +31,74 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
             type: "number",
             placeholder: "8000",
             description: "The port the termostat uses to communicate, typically 8000 for 8800 series, and 7000 for 6000 series thermostats."
+        },
+        heatBlast: {
+            title: "Heat Blast",
+            type: "boolean",
+            description: "The thermostat is in Heat Blast mode.",
+            onPut: (oldValue, newValue) => this.setHeatBlast(newValue)
+        },
+        hold: {
+            title: "Temperature Hold",
+            type: "string",
+            choices: ["Schedule", "Temporary", "Permanent", "Away", "Vacation"],
+            description: "The type of temperature hold the thermostat is following.",
+            onPut: (oldValue, newValue) => this.setHold(newValue)
+        },
+        humidifierAvailable: {
+            type: "boolean",
+            hide: true
+        },
+        humidifierState: {
+            title: "Humidifier",
+            type: "string",
+            choices: ["On", "Off"],
+            description: "The state of the humidifier."
+        },
+        humidifierSetpoint: {
+            title: "Humidifier Setpoint",
+            type: "integer",
+            description: "The setpoint of the humidifier."
+        },
+        dehumidifierAvailable: {
+            type: "boolean",
+            hide: true
+        },
+        dehumidifierState: {
+            title: "Dehumidifier",
+            type: "string",
+            choices: ["On", "Off"],
+            description: "The state of the dehumidifier."
+        },
+        dehumidiferSetpoint: {
+            title: "Dehumidifier Setpoint",
+            type: "integer",
+            description: "The setpoint of the dehumidifier."
+        },
+        freshAirVentilationAvailable: {
+            type: "boolean",
+            hide: true
+        },
+        freshAirVentilationState: {
+            title: "Fresh Air",
+            type: "string",
+            choices: ["On", "Off"],
+            description: "The state of the fresh air."
+        },
+        airCleaningAvailable: {
+            type: "boolean",
+            hide: true
+        },
+        airCleaningState: {
+            title: "Air Cleaning",
+            type: "string",
+            choices: ["On", "Off"],
+            description: "The state of the air cleaning."
         }
     });
 
     client: AprilaireClient;
     last = new Map<string, BasePayloadResponse>();
-
-    humdifierOn: boolean = false;
-    dehumdifierOn: boolean = false;
 
     constructor(nativeId: string, client: AprilaireClient) {
         super(nativeId);
@@ -47,6 +119,19 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
         this.client.on("response", (response: BasePayloadResponse) => {
             self.processResponse(response);
         });
+    }
+
+    async getRefreshFrequency(): Promise<number> {
+        return 300; // every 5 mins
+    }
+
+    async sync(): Promise<void> {
+        let request = new SyncRequest();
+        this.client.write(request);
+    }
+
+    async refresh(refreshInterface: string, userInitiated: boolean): Promise<void> {
+        await this.sync();
     }
 
     async setFan(fan: FanState): Promise<void> {
@@ -101,6 +186,18 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
 
     turnOn(): Promise<void> {
         return this.setThermostatMode(ThermostatMode.On);
+    }
+
+    setHeatBlast(newValue: any) {
+        throw new Error('Function not implemented.');
+    }
+    
+    setVacation(newValue: any) {
+        throw new Error('Function not implemented.');
+    }
+    
+    setHold(newValue: any) {
+        throw new Error('Function not implemented.');
     }
 
     async setTemperatureUnit(temperatureUnit: TemperatureUnit): Promise<void> {
@@ -166,16 +263,31 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
         this.client.write(request);
     }
 
-    getSettings(): Promise<Setting[]> {
-        return this.storageSettings.getSettings();
+    async getSettings(): Promise<Setting[]> {
+        let s = await this.storageSettings.getSettings();
+
+        const h = this.storageSettings.values.humidifierAvailable;
+        const d = this.storageSettings.values.dehumidifierAvailable;
+        const v = this.storageSettings.values.freshAirVentilationAvailable;
+        const p = this.storageSettings.values.airCleaningAvailable;
+
+        const settings = s.filter(setting => {
+            if (!h && setting.key.startsWith("humidifier"))
+                return false;
+            else if (!d && setting.key.startsWith("dehumidifer"))
+                return false;
+            else if (!v && setting.key.startsWith("freshAirVentilation"))
+                return false;
+            else if (!p && setting.key.startsWith("airCleaning"))
+                return false;
+            else
+                return true;
+        })
+
+        return settings;
     }
     putSetting(key: string, value: SettingValue): Promise<void> {
         return this.storageSettings.putSetting(key, value);
-    }
-
-    refresh() {
-        this.client.requestThermostatIAQAvailable();
-        this.client.requestThermostatSetpointAndModeSettings();
     }
 
     private processResponse(response: BasePayloadResponse) {
@@ -226,6 +338,11 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
                 humiditySetting.activeMode = HumidityMode.Auto;
             else 
                 humiditySetting.activeMode = HumidityMode.Off;
+
+            this.storageSettings.values.humidifierState = response.humidification === HumidificationStatus.Off ? this.deviceOff : this.deviceOn;
+            this.storageSettings.values.dehumidifierState = response.dehumidification === DehumidificationStatus.Off ? this.deviceOff : this.deviceOn;
+            this.storageSettings.values.freshAirVentilationState = response.ventilation === VentilationStatus.Off ? this.deviceOff : this.deviceOn;
+            this.storageSettings.values.airCleaningState = response.airCleaning === AirCleaningStatus.Off ? this.deviceOff : this.deviceOn;
         }
 
         else if (response instanceof ThermostatAndIAQAvailableResponse) {
@@ -259,35 +376,50 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
                 modes.push(HumidityMode.Auto);
 
             humiditySetting.availableModes = modes;
+
+            this.storageSettings.values.humidifierAvailable = response.humidification;
+            this.storageSettings.values.dehumidifierAvailable = response.dehumidification;
+            this.storageSettings.values.freshAirVentilationAvailable = response.freshAirVentilation;
+            this.storageSettings.values.airCleaningAvailable = response.airCleaning;
         }
 
         else if (response instanceof HumidificationSetpointResponse) {
-            this.humdifierOn = response.on;
+            this.storageSettings.values.humidifierState = response.on ? this.deviceOn : this.deviceOff;
 
-            if (response.on)
+            const humdifierOn = this.storageSettings.values.humidifierState === this.deviceOn;
+            const dehumdifierOn = this.storageSettings.values.dehumidifierState === this.deviceOn;
+
+            if (humdifierOn) {
+                this.storageSettings.values.humidifierSetpoint = response.humidificationSetpoint;
                 humiditySetting.humidifierSetpoint = response.humidificationSetpoint;
+            }
 
-            if (this.humdifierOn && !this.dehumdifierOn)
+            if (humdifierOn && !dehumdifierOn)
                 humiditySetting.mode = HumidityMode.Humidify;
-            else if (!this.humdifierOn && this.dehumdifierOn)
+            else if (!humdifierOn && dehumdifierOn)
                 humiditySetting.mode = HumidityMode.Dehumidify;
-            else if (this.humdifierOn && this.dehumdifierOn)
+            else if (humdifierOn && dehumdifierOn)
                 humiditySetting.mode = HumidityMode.Auto;
             else 
                 humiditySetting.mode = HumidityMode.Off;
         }
 
         else if (response instanceof DehumidificationSetpointResponse) {
-            this.dehumdifierOn = response.on;
+            this.storageSettings.values.dehumidifierState = response.on ? this.deviceOn : this.deviceOff;
 
-            if (response.on)
-            humiditySetting.dehumidifierSetpoint = response.dehumidificationSetpoint;
+            const humdifierOn = this.storageSettings.values.humidifierState === this.deviceOn;
+            const dehumdifierOn = this.storageSettings.values.dehumidifierState === this.deviceOn;
 
-            if (this.humdifierOn && !this.dehumdifierOn)
+            if (dehumdifierOn) {
+                this.storageSettings.values.dehumidiferSetpoint = response.dehumidificationSetpoint;
+                humiditySetting.dehumidifierSetpoint = response.dehumidificationSetpoint;
+            }
+
+            if (humdifierOn && !dehumdifierOn)
                 humiditySetting.mode = HumidityMode.Humidify;
-            else if (!this.humdifierOn && this.dehumdifierOn)
+            else if (!humdifierOn && dehumdifierOn)
                 humiditySetting.mode = HumidityMode.Dehumidify;
-            else if (this.humdifierOn && this.dehumdifierOn)
+            else if (humdifierOn && dehumdifierOn)
                 humiditySetting.mode = HumidityMode.Auto;
             else 
                 humiditySetting.mode = HumidityMode.Off;

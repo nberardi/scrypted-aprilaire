@@ -1,4 +1,6 @@
-import { BasePayloadResponse, FunctionalDomain, BasePayloadRequest, FunctionalDomainStatus } from "./AprilaireClient";
+import { FunctionalDomain, FunctionalDomainStatus } from "./AprilaireClient";
+import { BasePayloadResponse } from "./BasePayloadResponse";
+import { BasePayloadRequest } from "./BasePayloadRequest";
 
 export class CosRequest extends BasePayloadRequest {
     constructor() {

@@ -4,37 +4,9 @@ import { ThermostatAndIAQAvailableResponse, FreshAirSettingsResponse, AirCleanin
 import { MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse } from "./FunctionalDomainIdentification";
 import { ControllingSensorsStatusAndValueResponse, WrittenOutdoorTemperatureValueResponse } from "./FunctionalDomainSensors";
 import { ThermostatInstallerSettingsResponse, ScaleResponse } from "./FunctionalDomainSetup";
-import { CosRequest, SyncRequest, IAQStatusResponse, ThermostatStatusResponse, SyncResponse } from "./FunctionalDomainStatus";
-
-export class BasePayloadRequest {
-    domain: FunctionalDomain;
-    attribute: number;
-    constructor(domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
-        this.domain = domain;
-        this.attribute = attribute;
-    }
-
-    toBuffer() : Buffer { 
-        return Buffer.alloc(0);
-    }
-}
-
-export class BasePayloadResponse {
-    timestamp = Date.now;
-
-    payload: Buffer;
-    error: boolean;
-    domain: FunctionalDomain;
-    attribute: number;
-
-    constructor(payload: Buffer, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
-        this.payload = payload;
-        this.error = false;
-
-        this.domain = domain;
-        this.attribute = attribute;
-    }
-}
+import { CosRequest, IAQStatusResponse, ThermostatStatusResponse, SyncResponse } from "./FunctionalDomainStatus";
+import { BasePayloadRequest } from "./BasePayloadRequest";
+import { BasePayloadResponse } from "./BasePayloadResponse";
 
 export class AprilaireClient extends EventEmitter {
     private client: AprilaireSocket;
@@ -54,14 +26,6 @@ export class AprilaireClient extends EventEmitter {
         this.client = new AprilaireSocket(host, port);
     }
 
-    requestThermostatIAQAvailable() {
-        this.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
-    }
-
-    requestThermostatSetpointAndModeSettings() {
-        this.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermstateSetpointAndModeSettings);
-    }
-
     write(request: BasePayloadRequest) {
         this.client.sendObjectRequest(Action.Write, request);
     }
@@ -73,11 +37,10 @@ export class AprilaireClient extends EventEmitter {
         this.client.once("connected", () => {
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.MacAddress);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.RevisionAndModel);
-            //self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
+            self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Sensors, FunctionalDomainSensors.ControllingSensorValues);
             self.client.sendObjectRequest(Action.Write, new CosRequest());
-            self.client.sendObjectRequest(Action.Write, new SyncRequest());
     
             self.emit("connected", self);
         });

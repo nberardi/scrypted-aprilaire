@@ -1,4 +1,6 @@
-import { BasePayloadResponse, FunctionalDomain, FunctionalDomainControl, convertByteToTemperature, BasePayloadRequest, convertTemperatureToByte } from "./AprilaireClient";
+import { FunctionalDomain, FunctionalDomainControl, convertByteToTemperature, convertTemperatureToByte } from "./AprilaireClient";
+import { BasePayloadResponse } from "./BasePayloadResponse";
+import { BasePayloadRequest } from "./BasePayloadRequest";
 
 export class ThermostatSetpointAndModeSettingsResponse extends BasePayloadResponse {
     mode: ThermostatMode;
@@ -109,7 +111,7 @@ export class AirCleaningSettingsResponse extends BasePayloadResponse {
 export class ThermostatAndIAQAvailableResponse extends BasePayloadResponse {
     thermostat: ThermostatCapabilities;
     airCleaning: boolean;
-    freshAir: boolean;
+    freshAirVentilation: boolean;
     dehumidification: boolean;
     humidification: boolean;
 
@@ -118,7 +120,7 @@ export class ThermostatAndIAQAvailableResponse extends BasePayloadResponse {
 
         this.thermostat = payload.readUint8(0);
         this.airCleaning = Boolean(payload.readUint8(1));
-        this.freshAir = Boolean(payload.readUint8(2));
+        this.freshAirVentilation = Boolean(payload.readUint8(2));
         this.dehumidification = Boolean(payload.readUint8(3));
         this.humidification = Boolean(payload.readUint8(4));
     }

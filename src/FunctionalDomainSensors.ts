@@ -1,4 +1,6 @@
-import { BasePayloadResponse, FunctionalDomain, convertByteToTemperature, BasePayloadRequest, convertTemperatureToByte, FunctionalDomainSensors } from "./AprilaireClient";
+import { FunctionalDomain, convertByteToTemperature, convertTemperatureToByte, FunctionalDomainSensors } from "./AprilaireClient";
+import { BasePayloadResponse } from "./BasePayloadResponse";
+import { BasePayloadRequest } from "./BasePayloadRequest";
 
 export class WrittenOutdoorTemperatureValueRequest extends BasePayloadRequest {
     status: number = 0;

@@ -1,4 +1,5 @@
-import { BasePayloadResponse, FunctionalDomain, FunctionalDomainIdentification } from "./AprilaireClient";
+import { FunctionalDomain, FunctionalDomainIdentification } from "./AprilaireClient";
+import { BasePayloadResponse } from "./BasePayloadResponse";
 
 export class ThermostatNameResponse extends BasePayloadResponse {
     postalCode: string;

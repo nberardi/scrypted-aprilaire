@@ -1,7 +1,8 @@
 import sdk, { Device, DeviceCreator, DeviceCreatorSettings, ScryptedDeviceType, ScryptedInterface, SettingValue } from '@scrypted/sdk';
 import { DeviceProvider, ScryptedDeviceBase, Setting, Settings } from '@scrypted/sdk';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
-import { AprilaireClient, BasePayloadResponse } from './AprilaireClient';
+import { AprilaireClient } from './AprilaireClient';
+import { BasePayloadResponse } from "./BasePayloadResponse";
 import { AprilaireThermostat } from './AprilaireThermostat';
 import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, WrittenOutdoorTemperatureValueRequest } from './FunctionalDomainSensors';
 import { ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
@@ -63,32 +64,23 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         if (s) {
             const host = s.getItem("host");
             const port = Number(s.getItem("port"));
-            const self = this;
 
-            let c = new AprilaireClient(host, port);
-            c.on("response", (response, client) => {
-                self.responseReceived(response, client, self);
-            });
-
-            let d = new AprilaireThermostat(nativeId, c);
-            c.connect();
-            d.refresh();
-
-            this.thermostats.set(nativeId, d);
-            this.clients.set(nativeId, c);
-
-            return d;
+            const { nativeId, device, thermostat } = await this.connectThermostat(host, port);
+            return thermostat;
         }
+
+        return undefined;
     }
 
-    async createDevice(settings: DeviceCreatorSettings): Promise<string> {
-        const host = settings.host.toString();
-        const port = Number(settings.port);
+    private connectThermostat(host: string, port: number) : Promise<any> {
         const client = new AprilaireClient(host, port);
-
         const self = this;
 
-        return new Promise<string>((resolve) => {
+        client.on("response", (response, client) => {
+            self.responseReceived(response, client, self);
+        });
+
+        return new Promise<any>((resolve) => {
             client.connect();
             client.once("ready", async () => {
 
@@ -104,7 +96,8 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                         ScryptedInterface.Fan,
                         ScryptedInterface.OnOff,
                         ScryptedInterface.Online,
-                        ScryptedInterface.Settings
+                        ScryptedInterface.Settings,
+                        ScryptedInterface.Refresh
                     ],
                     info: {
                         model: client.model,
@@ -124,15 +117,24 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 s.setItem("host", host);
                 s.setItem("port", port.toString());
 
-                const thermostat = new AprilaireThermostat(d.nativeId, client);
+                const t = new AprilaireThermostat(d.nativeId, client);
+                t.sync();
 
                 self.clients.set(d.nativeId, client);
-                self.thermostats.set(d.nativeId, thermostat);
+                self.thermostats.set(d.nativeId, t);
 
-                resolve(d.nativeId);
+                resolve({nativeId: d.nativeId, device: d, thermostat: t });
             });
         });
     }
+
+    async createDevice(settings: DeviceCreatorSettings): Promise<string> {
+        const host = settings.host.toString();
+        const port = Number(settings.port);
+
+        const { nativeId, device, thermostat } = await this.connectThermostat(host, port);
+        return nativeId;
+    }  
 
     async getCreateDeviceSettings(): Promise<Setting[]> {
         return [
