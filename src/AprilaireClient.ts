@@ -1,3 +1,7 @@
+// much of the raw algorithms used below is based on the foundational work done by
+// https://github.com/chamberlain2007/aprilaire-ha
+// without his exploration and ground work, it would have taken much longer to get this up and running
+
 import { EventEmitter } from "events";
 import { Socket } from "node:net";
 import { ThermostatAndIAQAvailableResponse, FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse, ThermostatSetpointAndModeSettingsResponse } from "./FunctionalDomainControl";
