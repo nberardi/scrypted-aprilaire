@@ -5,29 +5,29 @@ import { FanModeSetting } from "./FunctionalDomainControl";
 
 export class ScheduleHoldRequest extends BasePayloadRequest {
     hold: HoldType = HoldType.Disabled;
-    fan: FanModeSetting = FanModeSetting.Auto;
-    heatSetpoint: number = 18.5; // default to 65 F
-    coolSetpoint: number = 25.5; // default to 78 F
-    dehumidifierSetpoint: number = 50;
+    fan: FanModeSetting;
+    heatSetpoint: number;
+    coolSetpoint: number;
+    dehumidifierSetpoint: number;
     endDate: Date;
     constructor() {
         super(FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleHold);
     }
 
     toBuffer(): Buffer {
-        let endDate = this.endDate ?? new Date(Date.now() + 3600); // 1 hour in the future
+        let endDate = this.endDate;
 
         let payload = Buffer.alloc(9);
         payload.writeUint8(this.hold ?? 0, 0);
-        payload.writeUint8(this.fan ?? FanModeSetting.Auto, 1);
-        payload.writeUint8(convertTemperatureToByte(this.heatSetpoint ?? 18), 2); 
-        payload.writeUint8(convertTemperatureToByte(this.coolSetpoint ?? 25.5), 3); 
-        payload.writeUint8(this.dehumidifierSetpoint ?? 50, 4);
-        payload.writeUint8(endDate.getMinutes(), 5);
-        payload.writeUint8(endDate.getHours(), 6);
-        payload.writeUint8(endDate.getDay(), 7);
-        payload.writeUint8(endDate.getMonth(), 8);
-        payload.writeUint8(endDate.getFullYear() - 2000, 9);
+        payload.writeUint8(this.fan ?? 0, 1);
+        payload.writeUint8(convertTemperatureToByte(this.heatSetpoint ?? 0), 2); 
+        payload.writeUint8(convertTemperatureToByte(this.coolSetpoint ?? 0), 3); 
+        payload.writeUint8(this.dehumidifierSetpoint ?? 0, 4);
+        payload.writeUint8(endDate?.getMinutes() ?? 0, 5);
+        payload.writeUint8(endDate?.getHours()  ?? 0, 6);
+        payload.writeUint8(endDate?.getDay() ?? 0, 7);
+        payload.writeUint8(endDate?.getMonth() ?? 0, 8);
+        payload.writeUint8((endDate?.getFullYear() - 2000) ?? 0, 9);
         return payload;
     }
 }
