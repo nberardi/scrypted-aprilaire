@@ -733,10 +733,11 @@ class AprilaireSocket extends EventEmitter {
         frame.writeUint8(payloadCrc, frame.byteLength - 1);
 
         console.debug(`Queuing data, sequence=${this.sequence}, action=${action}, functional_domain=${domain}, attribute=${attribute}`);
-        
+
         // increment sequence for next command
         this.sequence = (this.sequence + 1) % 127;
 
+        console.debug(`sending data: ${frame.toString("base64")}`);
         this.client.write(frame);
     }
 }
