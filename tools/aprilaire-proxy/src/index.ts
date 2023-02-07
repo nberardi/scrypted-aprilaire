@@ -45,20 +45,24 @@ for (let i of map) {
 
         console.log(`${clientAddress} <> ${thermostatAddress}: connected`);
 
-        thermostat.pipe(client, { end: true });
         thermostat.on("data", (data: Buffer) => {
             console.log(`${clientAddress} <- ${thermostatAddress}: ${data.byteLength} bytes sent to client`);
+            client.write(data);
         });
 
-        client.pipe(thermostat, { end: false });
+        thermostat.on("end", () => {
+            console.log(`${clientAddress} <- ${thermostatAddress}: thermostat disconnected`);
+            client.end();
+        });
+
         client.on("data", (data: Buffer) => {
             console.log(`${clientAddress} -> ${thermostatAddress}: ${data.byteLength} bytes sent to thermostat`);
+            thermostat.write(data);
         });
 
         client.on("close", (hadError: boolean) => {
             console.log(`${clientAddress} !! ${thermostatAddress}: disconnected ${hadError ? "with error" : ""}`);
         });
-    
     });
 
     server.on("close", (hadError: boolean) => {
