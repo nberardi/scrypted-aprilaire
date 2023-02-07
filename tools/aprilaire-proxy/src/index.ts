@@ -10,6 +10,62 @@ const map = new Map<number, string>();
 map.set(8001, "10.10.0.23");
 map.set(8002, "10.10.0.24");
 
+class AprilaireProxy {
+    client: net.Socket;
+    thermostat: net.Socket;
+
+    writeToClient: (data: Buffer) => void;
+    writeToThermostat: (data: Buffer) => void;
+    endToClient: () => void;
+
+    constructor(client: net.Socket, thermostat: net.Socket) {
+        this.client = client;
+        this.thermostat = thermostat;
+    }
+
+    public connect() {
+        const clientAddress = this.client.remoteAddress;
+        const thermostatAddress = this.thermostat.remoteAddress;
+        const self = this;
+
+        this.writeToClient = (data: Buffer) => {
+            console.log(`${clientAddress} <- ${thermostatAddress}: ${data.byteLength} bytes sent to client`);
+            self.client.write(data);
+        };
+        
+        this.writeToThermostat = (data: Buffer) => {
+            console.log(`${clientAddress} -> ${thermostatAddress}: ${data.byteLength} bytes sent to thermostat`);
+            self.thermostat.write(data);
+        };
+
+        this.endToClient = () => {
+            console.log(`${clientAddress} <- ${thermostatAddress}: thermostat disconnected`);
+            self.client.end();
+        };
+
+        this.thermostat.on("data", this.writeToClient);
+        this.client.on("data", this.writeToThermostat);
+        this.thermostat.on("end", this.endToClient);
+
+        console.log(`${clientAddress} <> ${thermostatAddress}: connected`);
+    }
+
+    disconnect() {
+        const clientAddress = this.client.remoteAddress;
+        const thermostatAddress = this.thermostat.remoteAddress;
+
+        this.thermostat.off("data", this.writeToClient);
+        this.client.off("data", this.writeToThermostat);
+        this.thermostat.off("end", this.endToClient);
+
+        console.log(`${clientAddress} !! ${thermostatAddress}: disconnected`);
+
+        this.client.removeAllListeners();
+        this.client.end();
+        this.client.destroy();
+    }
+}
+
 function connect(host: string) : net.Socket {
     if (thermostats.has(host)) {
         return thermostats.get(host)!;
@@ -39,29 +95,28 @@ for (let i of map) {
     const host = i[1];
     const server = net.createServer({ keepAlive: true }, client => {
         const thermostat = connect(host);
-
-        const clientAddress = client.remoteAddress;
         const thermostatAddress = thermostat.remoteAddress;
 
-        console.log(`${clientAddress} <> ${thermostatAddress}: connected`);
+        if (thermostat.readyState === "closed" || thermostatAddress === undefined) {
+            thermostats.delete(host);
 
-        thermostat.on("data", (data: Buffer) => {
-            console.log(`${clientAddress} <- ${thermostatAddress}: ${data.byteLength} bytes sent to client`);
-            client.write(data);
+            console.log(`${host}: disconnected please reconnect to try again`);
+            client.destroy();
+            return;
+        }
+
+        const clientAddress = client.remoteAddress;
+        const proxy = new AprilaireProxy(client, thermostat);
+
+        proxy.connect();
+
+        client.on("error", (err: Error) => {
+            console.log(`${clientAddress} error ${err}`);
         });
 
-        thermostat.on("end", () => {
-            console.log(`${clientAddress} <- ${thermostatAddress}: thermostat disconnected`);
-            client.end();
-        });
-
-        client.on("data", (data: Buffer) => {
-            console.log(`${clientAddress} -> ${thermostatAddress}: ${data.byteLength} bytes sent to thermostat`);
-            thermostat.write(data);
-        });
-
-        client.on("close", (hadError: boolean) => {
-            console.log(`${clientAddress} !! ${thermostatAddress}: disconnected ${hadError ? "with error" : ""}`);
+        client.on("end", () => {
+            console.log(`${clientAddress} -> ${thermostatAddress}: client disconnected`);
+            proxy.disconnect();
         });
     });
 
