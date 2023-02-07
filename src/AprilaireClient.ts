@@ -693,7 +693,7 @@ class AprilaireSocket extends EventEmitter {
         });
 
         this.client.on("connect", () => { console.debug("socket connect"); });
-        this.client.on("drain", () => {console.debug("socket drain");});
+        this.client.on("drain", () => { console.debug("socket drain"); });
         this.client.on("end", () => { console.debug("socket end"); });
         this.client.on("error", (err: Error) => { console.debug(`socket error: ${err}`); });
         this.client.on("timeout", () => { console.debug("socket timeout"); });
@@ -732,12 +732,11 @@ class AprilaireSocket extends EventEmitter {
         const frame = Buffer.alloc(payload.byteLength + 1, payload);
         frame.writeUint8(payloadCrc, frame.byteLength - 1);
 
-        console.debug(`Queuing data, sequence=${this.sequence}, action=${action}, functional_domain=${domain}, attribute=${attribute}`);
+        console.debug(`queuing data, sequence=${this.sequence}, action=${action}, functional_domain=${domain}, attribute=${attribute}, data=${frame.toString("base64")}`);
 
         // increment sequence for next command
         this.sequence = (this.sequence + 1) % 127;
-
-        console.debug(`sending data: ${frame.toString("base64")}`);
+        
         this.client.write(frame);
     }
 }

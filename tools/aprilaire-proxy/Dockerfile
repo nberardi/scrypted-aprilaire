@@ -19,7 +19,5 @@ COPY . .
 
 EXPOSE 8001
 EXPOSE 8002
-EXPOSE 8003
-EXPOSE 8004
 
 CMD [ "ts-node", "index.ts" ]
