@@ -114,7 +114,7 @@ function clientConnected (client: net.Socket) {
 
     // If the client is already connected, we can't do anything
     if(clients.has(clientKey)) {
-        log(`${clientAddress} already connected, only 1 connection allowed`);
+        log(`${clientAddress} -> ${host}: already connected, only 1 connection allowed`);
         client.destroy();
         return;
     }
@@ -125,7 +125,7 @@ function clientConnected (client: net.Socket) {
         const now = new Date();
 
         if (now.getTime() - lastConnected!.getTime() < 1000) {
-            log(`${clientAddress} too many connections, please wait 1 second before trying again`);
+            log(`${clientAddress} -> ${host}: too many connections, please wait 1 second before trying again`);
             client.destroy();
             return;
         }
@@ -140,7 +140,7 @@ function clientConnected (client: net.Socket) {
     if (thermostat.readyState === "closed" || thermostatAddress === undefined) {
         thermostats.delete(host);
 
-        log(`${host}: disconnected please reconnect to try again`);
+        log(`${clientAddress} -> ${host}: could not connect to thermostat`);
         client.destroy();
         return;
     }
