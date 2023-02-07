@@ -1,5 +1,7 @@
 import net from 'node:net';
 
+const LOG = process.env.LOG;
+
 const servers = new Map<number, net.Server>();
 
 const thermostats = new Map<string, net.Socket>();
@@ -9,6 +11,12 @@ thermostats.set("10.10.0.24", connectToThermostat("10.10.0.24"));
 const map = new Map<number, string>();
 map.set(8001, "10.10.0.23");
 map.set(8002, "10.10.0.24");
+
+function debug(message: string) {
+    if (LOG === "debug") {
+        console.debug(`[${new Date().toISOString()}] ${message}`);
+    }
+}
 
 function log(message: string) {
     console.log(`[${new Date().toISOString()}] ${message}`);
@@ -125,7 +133,7 @@ function clientConnected (client: net.Socket) {
         const now = new Date();
 
         if (now.getTime() - lastConnected!.getTime() < 1000) {
-            log(`${clientAddress} -> ${host}: too many connections, please wait 1 second before trying again`);
+            debug(`${clientAddress} -> ${host}: too many connections, please wait 1 second before trying again`);
             client.destroy();
             return;
         }
