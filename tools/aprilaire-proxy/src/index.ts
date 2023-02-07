@@ -71,6 +71,7 @@ class AprilaireProxy {
 }
 
 const clients = new Map<string, AprilaireProxy>();
+const clientsLastConnected = new Map<string, Date>();
 
 function connectToThermostat(host: string) : net.Socket {
     if (thermostats.has(host)) {
@@ -80,6 +81,7 @@ function connectToThermostat(host: string) : net.Socket {
     const thermostat = new net.Socket();
 
     thermostat.on("end", () => {
+        log(`${host} disconnected`);
         thermostats.delete(host);
     });
 
@@ -99,18 +101,6 @@ function clientConnected (client: net.Socket) {
     const port = client.localPort;
     const host = map.get(port);
 
-    const thermostat = connectToThermostat(host);
-    const thermostatAddress = thermostat.remoteAddress;
-
-    // If the thermostat is not connected, we can't do anything
-    if (thermostat.readyState === "closed" || thermostatAddress === undefined) {
-        thermostats.delete(host);
-
-        log(`${host}: disconnected please reconnect to try again`);
-        client.destroy();
-        return;
-    }
-
     const clientAddress = client.remoteAddress;
 
     // If the client is not connected, we can't do anything
@@ -125,7 +115,32 @@ function clientConnected (client: net.Socket) {
     // If the client is already connected, we can't do anything
     if(clients.has(clientKey)) {
         log(`${clientAddress} already connected, only 1 connection allowed`);
-        client.write(Buffer.from("Already connected, only 1 connection allowed\r", "utf8"));
+        client.destroy();
+        return;
+    }
+
+    // If the client is connecting too fast, we can't do anything
+    if (clientsLastConnected.has(clientKey)) {
+        const lastConnected = clientsLastConnected.get(clientKey);
+        const now = new Date();
+
+        if (now.getTime() - lastConnected!.getTime() < 1000) {
+            log(`${clientAddress} too many connections, please wait 1 second before trying again`);
+            client.destroy();
+            return;
+        }
+    }
+
+    clientsLastConnected.set(clientKey, new Date());
+
+    const thermostat = connectToThermostat(host);
+    const thermostatAddress = thermostat.remoteAddress;
+
+    // If the thermostat is not connected, we can't do anything
+    if (thermostat.readyState === "closed" || thermostatAddress === undefined) {
+        thermostats.delete(host);
+
+        log(`${host}: disconnected please reconnect to try again`);
         client.destroy();
         return;
     }
