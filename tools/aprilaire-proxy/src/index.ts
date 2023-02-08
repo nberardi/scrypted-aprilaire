@@ -119,8 +119,15 @@ function connectToThermostat(host: string) : Promise<net.Socket | undefined> {
     return new Promise<net.Socket>((resolve, reject) => {
 
         const thermostat = new net.Socket();
+        let timeout = setTimeout(() => {
+            debug(`thermostat ${host} connection timed out during connection`);
+            thermostat.destroy();
+            reject(new Error("connection timed out"));
+        }, 5000);
 
         thermostat.once("ready", () => {
+            clearTimeout(timeout);
+
             log(`thermostat ${host} connected`);
             initializeThermostat(thermostat);
             resolve(thermostat);
@@ -148,11 +155,7 @@ function connectToThermostat(host: string) : Promise<net.Socket | undefined> {
             debug(`thermostat ${host} connecting`);
         });
 
-        setTimeout(() => {
-            debug(`thermostat ${host} connection timed out during connection`);
-            thermostat.destroy();
-            reject(new Error("connection timed out"));
-        }, 5000);
+        
     });
 }
 
