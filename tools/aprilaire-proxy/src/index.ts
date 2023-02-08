@@ -4,13 +4,17 @@ const LOG = process.env.LOG;
 
 const servers = new Map<number, net.Server>();
 
-const thermostats = new Map<string, net.Socket>();
-thermostats.set("10.10.0.23", connectToThermostat("10.10.0.23"));
-thermostats.set("10.10.0.24", connectToThermostat("10.10.0.24"));
-
 const map = new Map<number, string>();
 map.set(8001, "10.10.0.23");
 map.set(8002, "10.10.0.24");
+
+const clients = new Map<string, AprilaireProxy>();
+const clientLastConnected = new Map<string, Date>();
+
+const thermostats = new Map<string, net.Socket>();
+thermostats.set("10.10.0.23", connectToThermostat("10.10.0.23"));
+thermostats.set("10.10.0.24", connectToThermostat("10.10.0.24"));
+const thermostatLastConnected = new Map<string, Date>();
 
 function debug(message: string) {
     if (LOG === "debug") {
@@ -78,13 +82,23 @@ class AprilaireProxy {
     }
 }
 
-const clients = new Map<string, AprilaireProxy>();
-const clientLastConnected = new Map<string, Date>();
-
-function connectToThermostat(host: string) : net.Socket {
+function connectToThermostat(host: string) : net.Socket | undefined {
     if (thermostats.has(host)) {
         return thermostats.get(host)!;
     }
+
+    // If too many connection attempts are coming in for a single host, reject the request to prevent flooding
+    if (thermostatLastConnected.has(host)) {
+        const lastConnected = thermostatLastConnected.get(host);
+        const now = new Date();
+
+        if (now.getTime() - lastConnected!.getTime() < 5000) {
+            debug(`${host}: too many connections, please wait 5 seconds before trying again`);
+            return undefined;
+        }
+    }
+
+    thermostatLastConnected.set(host, new Date());
 
     const thermostat = new net.Socket();
 
@@ -107,13 +121,13 @@ function connectToThermostat(host: string) : net.Socket {
 
 function clientConnected (client: net.Socket) {
     const port = client.localPort;
-    const host = map.get(port);
+    const host = map.get(port)!;
 
-    const clientAddress = client.remoteAddress;
+    const clientAddress = client?.remoteAddress;
 
     // If the client is not connected, we can't do anything
-    if (client.readyState === "closed" || clientAddress === undefined) {
-        log(`client ${clientAddress} disconnected`);
+    if (client === undefined || clientAddress === undefined || client.readyState !== "open") {
+        log(`client ${clientAddress} connection is ${client?.readyState}, cannot connect to ${host}`);
         client.destroy();
         return;
     }
@@ -142,13 +156,12 @@ function clientConnected (client: net.Socket) {
     clientLastConnected.set(clientKey, new Date());
 
     const thermostat = connectToThermostat(host);
-    const thermostatAddress = thermostat.remoteAddress;
+    const thermostatAddress = thermostat?.remoteAddress;
 
     // If the thermostat is not connected, we can't do anything
-    if (thermostat.readyState === "closed" || thermostatAddress === undefined) {
+    if (thermostat === undefined || thermostatAddress === undefined || thermostat.readyState !== "open") {
+        log(`thermostat ${host} connection is ${thermostat?.readyState}, cannot proxy for ${port}`);
         thermostats.delete(host);
-
-        log(`${clientAddress} -> ${host}: could not connect to thermostat`);
         client.destroy();
         return;
     }
