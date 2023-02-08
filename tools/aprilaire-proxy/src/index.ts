@@ -109,13 +109,13 @@ function connectToThermostat(host: string) : Promise<net.Socket | undefined> {
         });
 
         thermostat.on("end", () => {
-            log(`thermostat ${host} disconnected`);
+            debug(`thermostat ${host} disconnected`);
             thermostats.delete(host);
             reject(new Error("disconnected prematurely"));
         });
 
         thermostat.on("error", (err: Error) => {
-            log(`thermostat ${host} error ${err}`);
+            debug(`thermostat ${host} error ${err}`);
             thermostats.delete(host);
             reject(err);
         });
@@ -168,7 +168,10 @@ async function clientConnected (client: net.Socket) {
 
     clientLastConnected.set(clientKey, new Date());
 
-    const thermostat = await connectToThermostat(host);
+    const thermostat = await connectToThermostat(host).catch((err) => {
+        log(`thermostat ${host} error ${err}`);
+        return undefined;
+    });
     const thermostatAddress = thermostat?.remoteAddress;
 
     // If the thermostat is not connected, we can't do anything
