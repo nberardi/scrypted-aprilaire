@@ -127,16 +127,19 @@ function connectToThermostat(host: string) : Promise<net.Socket | undefined> {
         });
 
         thermostat.once("end", () => {
+            debug(`thermostat ${host} disconnected during connection`);
             thermostat.destroy();
             reject(new Error("disconnected prematurely"));
         });
 
         thermostat.once("close", () => {
+            debug(`thermostat ${host} disconnected during connection`);
             thermostat.destroy();
             reject(new Error("disconnected prematurely"));
         });
 
         thermostat.once("error", (err: Error) => {
+            debug(`thermostat ${host} errored during connection: ${err}`);
             thermostat.destroy();
             reject(err);
         });
@@ -146,6 +149,7 @@ function connectToThermostat(host: string) : Promise<net.Socket | undefined> {
         });
 
         setTimeout(() => {
+            debug(`thermostat ${host} connection timed out during connection`);
             thermostat.destroy();
             reject(new Error("connection timed out"));
         }, 5000);
