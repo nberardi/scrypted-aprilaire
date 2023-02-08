@@ -79,7 +79,7 @@ class AprilaireProxy {
 }
 
 const clients = new Map<string, AprilaireProxy>();
-const clientsLastConnected = new Map<string, Date>();
+const clientLastConnected = new Map<string, Date>();
 
 function connectToThermostat(host: string) : net.Socket {
     if (thermostats.has(host)) {
@@ -89,16 +89,16 @@ function connectToThermostat(host: string) : net.Socket {
     const thermostat = new net.Socket();
 
     thermostat.on("end", () => {
-        log(`${host} disconnected`);
+        log(`thermostat ${host} disconnected`);
         thermostats.delete(host);
     });
 
     thermostat.on("error", (err: Error) => {
-        log(`${host} error ${err}`);
+        log(`thermostat ${host} error ${err}`);
     });
 
     thermostat.connect({ host: host, port: 8000, keepAlive: true }, () => {
-        log(`${host} connected`);
+        log(`thermostat ${host} connected`);
     });
 
     thermostats.set(host, thermostat);
@@ -113,7 +113,7 @@ function clientConnected (client: net.Socket) {
 
     // If the client is not connected, we can't do anything
     if (client.readyState === "closed" || clientAddress === undefined) {
-        log(`${clientAddress} disconnected`);
+        log(`client ${clientAddress} disconnected`);
         client.destroy();
         return;
     }
@@ -127,19 +127,19 @@ function clientConnected (client: net.Socket) {
         return;
     }
 
-    // If the client is connecting too fast, we can't do anything
-    if (clientsLastConnected.has(clientKey)) {
-        const lastConnected = clientsLastConnected.get(clientKey);
+    // If the client is connecting too fast, reject the request to prevent flooding
+    if (clientLastConnected.has(clientKey)) {
+        const lastConnected = clientLastConnected.get(clientKey);
         const now = new Date();
 
-        if (now.getTime() - lastConnected!.getTime() < 1000) {
-            debug(`${clientAddress} -> ${host}: too many connections, please wait 1 second before trying again`);
+        if (now.getTime() - lastConnected!.getTime() < 5000) {
+            debug(`${clientAddress} -> ${host}: too many connections, please wait 5 seconds before trying again`);
             client.destroy();
             return;
         }
     }
 
-    clientsLastConnected.set(clientKey, new Date());
+    clientLastConnected.set(clientKey, new Date());
 
     const thermostat = connectToThermostat(host);
     const thermostatAddress = thermostat.remoteAddress;
@@ -163,7 +163,7 @@ function clientConnected (client: net.Socket) {
     clients.set(clientKey, proxy);
 
     client.on("error", (err: Error) => {
-        log(`${clientAddress} error ${err}`);
+        log(`client ${clientAddress} error ${err}`);
     });
 
     client.on("end", () => {
@@ -179,15 +179,15 @@ for (let i of map) {
     const server = net.createServer({ keepAlive: true }, clientConnected);
 
     server.on("close", (hadError: boolean) => {
-        log(`${port} close ${hadError ? "with error" : ""}`);
+        log(`server ${port} close ${hadError ? "with error" : ""}`);
     });
 
     server.on("error", (err: Error) => {
-        log(`${port} error ${err}`);
+        log(`server ${port} error ${err}`);
     });
 
     server.listen(port, () => {
-        log(`${port} listening for ${host}`);
+        log(`server ${port} listening for ${host}`);
     });
     
     servers.set(port, server);
