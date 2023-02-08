@@ -8,13 +8,13 @@ const map = new Map<number, string>();
 map.set(8001, "10.10.0.23");
 map.set(8002, "10.10.0.24");
 
-const clients = new Map<string, AprilaireProxy>();
 const clientLastConnected = new Map<string, Date>();
+const clients = new Map<string, AprilaireProxy>();
 
+const thermostatLastConnected = new Map<string, Date>();
 const thermostats = new Map<string, net.Socket>();
 thermostats.set("10.10.0.23", connectToThermostat("10.10.0.23"));
 thermostats.set("10.10.0.24", connectToThermostat("10.10.0.24"));
-const thermostatLastConnected = new Map<string, Date>();
 
 function debug(message: string) {
     if (LOG === "debug") {
