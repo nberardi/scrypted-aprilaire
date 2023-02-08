@@ -13,8 +13,6 @@ const clients = new Map<string, AprilaireProxy>();
 
 const thermostatLastConnected = new Map<string, Date>();
 const thermostats = new Map<string, net.Socket>();
-thermostats.set("10.10.0.23", connectToThermostat("10.10.0.23"));
-thermostats.set("10.10.0.24", connectToThermostat("10.10.0.24"));
 
 function debug(message: string) {
     if (LOG === "debug") {
