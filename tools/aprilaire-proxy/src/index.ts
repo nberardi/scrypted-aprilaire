@@ -80,6 +80,24 @@ class AprilaireProxy {
     }
 }
 
+function initializeThermostat(thermostat: net.Socket) {
+    const host = thermostat.remoteAddress;
+
+    // remove all the listeners that were added to satisfy the connection promise
+    thermostat.removeAllListeners();
+
+    thermostat.on("close", (hasError: boolean) => {
+        log(`thermostat ${host} disconnected`);
+        thermostats.delete(host);
+    });
+
+    thermostat.on("error", (err: Error) => {
+        log(`thermostat ${host} error ${err}`);
+    });
+
+    thermostats.set(host, thermostat);
+}
+
 function connectToThermostat(host: string) : Promise<net.Socket | undefined> {
     if (thermostats.has(host)) {
         return Promise.resolve(thermostats.get(host));
@@ -90,9 +108,9 @@ function connectToThermostat(host: string) : Promise<net.Socket | undefined> {
         const lastConnected = thermostatLastConnected.get(host);
         const now = new Date();
 
-        if (now.getTime() - lastConnected!.getTime() < 5000) {
-            debug(`${host}: too many connections, please wait 5 seconds before trying again`);
-            return undefined;
+        if (now.getTime() - lastConnected!.getTime() < 10000) {
+            debug(`${host}: too many connections, wait 10 seconds before trying again`);
+            return Promise.reject(new Error("too many connections, wait 10 seconds before trying again"));
         }
     }
 
@@ -102,21 +120,24 @@ function connectToThermostat(host: string) : Promise<net.Socket | undefined> {
 
         const thermostat = new net.Socket();
 
-        thermostat.on("ready", () => {
+        thermostat.once("ready", () => {
             log(`thermostat ${host} connected`);
-            thermostats.set(host, thermostat);
+            initializeThermostat(thermostat);
             resolve(thermostat);
         });
 
-        thermostat.on("end", () => {
-            debug(`thermostat ${host} disconnected`);
-            thermostats.delete(host);
+        thermostat.once("end", () => {
+            thermostat.destroy();
             reject(new Error("disconnected prematurely"));
         });
 
-        thermostat.on("error", (err: Error) => {
-            debug(`thermostat ${host} error ${err}`);
-            thermostats.delete(host);
+        thermostat.once("close", () => {
+            thermostat.destroy();
+            reject(new Error("disconnected prematurely"));
+        });
+
+        thermostat.once("error", (err: Error) => {
+            thermostat.destroy();
             reject(err);
         });
 
@@ -125,9 +146,8 @@ function connectToThermostat(host: string) : Promise<net.Socket | undefined> {
         });
 
         setTimeout(() => {
-            reject(new Error("connection timed out"));
-            thermostats.delete(host);
             thermostat.destroy();
+            reject(new Error("connection timed out"));
         }, 5000);
     });
 }
