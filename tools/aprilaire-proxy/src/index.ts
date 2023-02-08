@@ -159,7 +159,7 @@ function clientConnected (client: net.Socket) {
     const thermostatAddress = thermostat?.remoteAddress;
 
     // If the thermostat is not connected, we can't do anything
-    if (thermostat === undefined || thermostatAddress === undefined || thermostat.readyState !== "open") {
+    if (thermostat === undefined || thermostatAddress === undefined || (thermostat.readyState !== "open" && thermostat.readyState !== "opening")) {
         log(`thermostat ${host} connection is ${thermostat?.readyState}, cannot proxy for ${port}`);
         thermostats.delete(host);
         client.destroy();
