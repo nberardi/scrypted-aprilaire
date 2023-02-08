@@ -82,9 +82,9 @@ class AprilaireProxy {
     }
 }
 
-function connectToThermostat(host: string) : net.Socket | undefined {
+function connectToThermostat(host: string) : Promise<net.Socket | undefined> {
     if (thermostats.has(host)) {
-        return thermostats.get(host)!;
+        return Promise.resolve(thermostats.get(host));
     }
 
     // If too many connection attempts are coming in for a single host, reject the request to prevent flooding
@@ -100,26 +100,41 @@ function connectToThermostat(host: string) : net.Socket | undefined {
 
     thermostatLastConnected.set(host, new Date());
 
-    const thermostat = new net.Socket();
+    return new Promise<net.Socket>((resolve, reject) => {
 
-    thermostat.on("end", () => {
-        log(`thermostat ${host} disconnected`);
-        thermostats.delete(host);
+        const thermostat = new net.Socket();
+
+        thermostat.on("ready", () => {
+            log(`thermostat ${host} connected`);
+            thermostats.set(host, thermostat);
+            resolve(thermostat);
+        });
+
+        thermostat.on("end", () => {
+            log(`thermostat ${host} disconnected`);
+            thermostats.delete(host);
+            reject(new Error("disconnected prematurely"));
+        });
+
+        thermostat.on("error", (err: Error) => {
+            log(`thermostat ${host} error ${err}`);
+            thermostats.delete(host);
+            reject(err);
+        });
+
+        thermostat.connect({ host: host, port: 8000 }, () => {
+            debug(`thermostat ${host} connecting`);
+        });
+
+        setTimeout(() => {
+            reject(new Error("connection timed out"));
+            thermostats.delete(host);
+            thermostat.destroy();
+        }, 5000);
     });
-
-    thermostat.on("error", (err: Error) => {
-        log(`thermostat ${host} error ${err}`);
-    });
-
-    thermostat.connect({ host: host, port: 8000, keepAlive: true }, () => {
-        log(`thermostat ${host} connected`);
-    });
-
-    thermostats.set(host, thermostat);
-    return thermostat;
 }
 
-function clientConnected (client: net.Socket) {
+async function clientConnected (client: net.Socket) {
     const port = client.localPort;
     const host = map.get(port)!;
 
@@ -155,7 +170,7 @@ function clientConnected (client: net.Socket) {
 
     clientLastConnected.set(clientKey, new Date());
 
-    const thermostat = connectToThermostat(host);
+    const thermostat = await connectToThermostat(host);
     const thermostatAddress = thermostat?.remoteAddress;
 
     // If the thermostat is not connected, we can't do anything
