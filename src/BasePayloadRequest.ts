@@ -3,7 +3,7 @@ import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentificati
 
 export class BasePayloadRequest {
     domain: FunctionalDomain;
-    attribute: number;
+    attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup;
     constructor(domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
         this.domain = domain;
         this.attribute = attribute;

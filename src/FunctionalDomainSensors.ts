@@ -1,27 +1,31 @@
 import { FunctionalDomain, convertByteToTemperature, convertTemperatureToByte, FunctionalDomainSensors } from "./AprilaireClient";
-import { BasePayloadResponse } from "./BasePayloadResponse";
+import { BasePayloadResponse, ResponseErrorType } from "./BasePayloadResponse";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 
 export class WrittenOutdoorTemperatureValueRequest extends BasePayloadRequest {
-    status: number = 0;
     temperature: number = 0;
     constructor() {
-        super(FunctionalDomain.Sensors, FunctionalDomainSensors.WrittenOutdoorTempValue);
+        super(FunctionalDomain.Sensors, FunctionalDomainSensors.WrittenOutdoorTemperatureValue);
     }
 
     toBuffer(): Buffer {
         let payload = Buffer.alloc(2);
-        payload.writeUint8(0, 0);
+        payload.writeUint8(0, 0); // sensor status must be 0 for writes
         payload.writeUint8(this.temperature ? convertTemperatureToByte(this.temperature) : 0, 1);
         return payload;
     }
 }
 
 export class WrittenOutdoorTemperatureValueResponse extends BasePayloadResponse {
-    status: number = 0;
+    status: OurdoorSensorStatus = 0;
     temperature: number = 0;
     constructor(payload: Buffer) {
-        super(payload, FunctionalDomain.Sensors, FunctionalDomainSensors.WrittenOutdoorTempValue);
+        super(payload, FunctionalDomain.Sensors, FunctionalDomainSensors.WrittenOutdoorTemperatureValue);
+
+        if (payload.length === 0) {
+            this.responseError = ResponseErrorType.NoPayloadReceived;
+            return;
+        }
 
         this.status = payload.readUint8(0);
         this.temperature = convertByteToTemperature(payload.readUint8(1));
@@ -49,6 +53,11 @@ export class ControllingSensorsStatusAndValueResponse extends BasePayloadRespons
         this.outdoorHumidityStatus = payload.readUint8(6);
         this.outdoorHumidity = payload.readUint8(7);
     }
+}
+
+export enum OurdoorSensorStatus {
+    NoError = 0,
+    TimedOut = 4
 }
 
 export enum TemperatureSensorStatus {

@@ -8,10 +8,10 @@ import { ThermostatAndIAQAvailableResponse, FreshAirSettingsResponse, AirCleanin
 import { MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse } from "./FunctionalDomainIdentification";
 import { ControllingSensorsStatusAndValueResponse, WrittenOutdoorTemperatureValueResponse } from "./FunctionalDomainSensors";
 import { ThermostatInstallerSettingsResponse, ScaleResponse } from "./FunctionalDomainSetup";
-import { CosRequest, IAQStatusResponse, ThermostatStatusResponse, SyncResponse } from "./FunctionalDomainStatus";
+import { CosRequest, IAQStatusResponse, ThermostatStatusResponse, SyncResponse, ThermostatErrorResponse, OfflineResponse } from "./FunctionalDomainStatus";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse } from "./BasePayloadResponse";
-import { HeatBlastResponse, ScheduleHoldResponse } from "./FunctionalDomainScheduling";
+import { AwaySettingsResponse, HeatBlastResponse, ScheduleHoldResponse } from "./FunctionalDomainScheduling";
 
 export class AprilaireClient extends EventEmitter {
     private client: AprilaireSocket;
@@ -99,50 +99,6 @@ export class AprilaireClient extends EventEmitter {
     }
 }
 
-function parseResponse (data: Buffer) : AprilaireResponsePayload[] {
-    let response: AprilaireResponsePayload[] = [];
-
-    let workingData = data;
-    let count = 0;
-    let position = 0;
-    while(true) {
-        if (workingData.length === 0 || count > 50)
-            break;
-    
-        const { revision, sequence, length, action, domain, attribute } = decodeHeader(workingData);
-        const payload = workingData.subarray(7, 4 + length);
-        const crc = workingData[4 + length];
-        const crcCheck = generateCrc(workingData.subarray(0, 4 + length));
-
-        console.assert(crc === crcCheck, `failed: crc check, expecting ${crcCheck} received ${crc}`);
-        console.log(`position: ${position}, length: ${length}, action: ${Action[action]}, domain: ${FunctionalDomain[domain]}, attribute: ${attribute}, array: ${workingData.length}`)
-    
-        response.push(new AprilaireResponsePayload(revision, sequence, length, action, domain, attribute, payload, crc));
-
-        const nextStart = 4 + length + 1;
-        workingData = workingData.subarray(nextStart);
-    
-        position = position + nextStart;
-        count++;
-    }
-
-    return response;
-}
-
-function decodeHeader (data: Buffer) {
-    try {
-        const revision: number = data.readUint8(0);
-        const sequence: number = data.readUint8(1);
-        const length: number = data.readUint16BE(2);
-        const action: Action = data.readUint8(4);
-        const domain: FunctionalDomain = data.readUint8(5);
-        const attribute: number = data.readUint8(6);
-        return { revision, sequence, length, action, domain, attribute };
-    } catch {
-        return { revision: 1, sequence: 0, length: 0, action: Action.None, domain: FunctionalDomain.None, attribute: 0 };
-    }
-}
-
 export enum Action {
     None = 0,
     Write = 1,
@@ -218,7 +174,7 @@ export enum FunctionalDomainSensors {
     SensorValues = 1,
     ControllingSensorValues = 2,
     SupportModules = 3,
-    WrittenOutdoorTempValue = 4
+    WrittenOutdoorTemperatureValue = 4
 }
 
 export enum NAckError {
@@ -540,6 +496,8 @@ function generateCrc(data: Buffer): number {
 }
 
 export class AprilaireResponsePayload {
+    host: string;
+    port: number;
     revision: number;
     sequence: number;
     length: number;
@@ -549,7 +507,9 @@ export class AprilaireResponsePayload {
     payload: Buffer;
     crc: number;
 
-    constructor(revision: number, sequence: number, length: number, action: Action, domain: FunctionalDomain, attribute: number, payload: Buffer, crc: number) {
+    constructor(host: string, port: number, revision: number, sequence: number, length: number, action: Action, domain: FunctionalDomain, attribute: number, payload: Buffer, crc: number) {
+        this.host = host;
+        this.port = port;
         this.revision = revision;
         this.sequence = sequence;
         this.length = length;
@@ -560,13 +520,15 @@ export class AprilaireResponsePayload {
         this.crc = crc;
     }
 
-    toObject(): any {
-        if (this.action !== Action.ReadResponse && this.action !== Action.COS && this.action !== Action.NAck)
-            throw Error(`Recived an unrecognized action: ${this.action}`)
+    toObject(): BasePayloadResponse | undefined {
+        if (this.action === Action.Write || this.action === Action.ReadRequest || this.action === Action.None) {
+            console.warn(`[${this.host}:${this.port}] skipping, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`);
+            return undefined;
+        }
 
-        if (this.action == Action.NAck) {
-            console.error(`NAck received, sequence=${this.sequence}, action=${this.action}, functional_domain=${this.domain}`);
-            throw Error(`NAck received, sequence=${this.sequence}, action=${this.action}, nack=${this.domain}`);
+        if (this.action === Action.NAck) {
+            console.error(`[${this.host}:${this.port}] received error, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`);
+            throw Error(`[${this.host}:${this.port}] received error, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`);
         }
 
         switch(this.domain) {
@@ -594,6 +556,8 @@ export class AprilaireResponsePayload {
                         return new ScheduleHoldResponse(this.payload);
                     case FunctionalDomainScheduling.HeatBlast:
                         return new HeatBlastResponse(this.payload);
+                    case FunctionalDomainScheduling.AwaySettings:
+                        return new AwaySettingsResponse(this.payload);
                 }
                 break;
             case FunctionalDomain.Control:
@@ -620,19 +584,23 @@ export class AprilaireResponsePayload {
                         return new ThermostatStatusResponse(this.payload);
                     case FunctionalDomainStatus.Sync:
                         return new SyncResponse(this.payload);
+                    case FunctionalDomainStatus.ThermostatError:
+                        return new ThermostatErrorResponse(this.payload);
+                    case FunctionalDomainStatus.Offline:
+                        return new OfflineResponse(this.payload);
                 }
                 break;
             case FunctionalDomain.Sensors:
                 switch(this.attribute) {
                     case FunctionalDomainSensors.ControllingSensorValues:
                         return new ControllingSensorsStatusAndValueResponse(this.payload);
-                    case FunctionalDomainSensors.WrittenOutdoorTempValue:
+                    case FunctionalDomainSensors.WrittenOutdoorTemperatureValue:
                         return new WrittenOutdoorTemperatureValueResponse(this.payload);
                 }
                 break;
         }
 
-        console.warn(`Recived an unrecognized domain: ${this.domain} and attribute: ${this.attribute}`);
+        console.warn(`[${this.host}:${this.port}] not implimented response payload, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`);
         return new BasePayloadResponse(this.payload, this.domain, this.attribute);
     }
 }
@@ -666,37 +634,33 @@ class AprilaireSocket extends EventEmitter {
         this.client = new Socket();
 
         this.client.on("close", (hadError: boolean) => {
-            console.debug("socket close", hadError);
+            console.debug(`[${this.host}:${this.port}] close`, hadError);
 
             self._connected = false;
             self.emit('disconnected');
         });
 
         this.client.on("data", (data: Buffer) => {
-            console.debug(`socket data: ${data.toString("base64")}`);
-
-            parseResponse(data).forEach(element => {
+            self.parseResponse(data).forEach(element => {
                 const payload = element.toObject();
-                self.emit('response', payload);
+
+                if (payload)
+                    self.emit('response', payload);
             });
         });
 
-        this.client.on("lookup", (err: Error, address: string, family: string | number, host: string) => { 
-            console.debug(`socket lookout: err: ${err}, address: ${address}, family: ${family}, host: ${host}`);
-        });
-
         this.client.on("ready", () => { 
-            console.debug("socket ready");
+            console.debug(`[${this.host}:${this.port}] ready`);
 
             self._connected = true;
             self.emit('connected');
         });
 
-        this.client.on("connect", () => { console.debug("socket connect"); });
-        this.client.on("drain", () => { console.debug("socket drain"); });
-        this.client.on("end", () => { console.debug("socket end"); });
-        this.client.on("error", (err: Error) => { console.debug(`socket error: ${err}`); });
-        this.client.on("timeout", () => { console.debug("socket timeout"); });
+        this.client.on("connect", () => { console.debug(`[${this.host}:${this.port}] connect`); });
+        this.client.on("drain", () => { console.debug(`[${this.host}:${this.port}] drain`); });
+        this.client.on("end", () => { console.debug(`[${this.host}:${this.port}] end`); });
+        this.client.on("error", (err: Error) => { console.debug(`[${this.host}:${this.port}] error: ${err}`); });
+        this.client.on("timeout", () => { console.debug(`[${this.host}:${this.port}] timeout`); });
     }
 
     connect() {
@@ -713,11 +677,55 @@ class AprilaireSocket extends EventEmitter {
         this.sendCommand(action, request.domain, request.attribute, request.toBuffer());
     }
 
-    sendRequest(action: Action, domain: FunctionalDomain, attribute: number) {
+    sendRequest(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
         this.sendCommand(action, domain, attribute);
     }
 
-    private sendCommand(action: Action, domain: FunctionalDomain, attribute: number, data: Buffer = Buffer.alloc(0)) {
+    private parseResponse (data: Buffer) : AprilaireResponsePayload[] {
+        let response: AprilaireResponsePayload[] = [];
+    
+        let workingData = data;
+        let count = 0;
+        let position = 0;
+        while(true) {
+            if (workingData.length === 0 || count > 50)
+                break;
+        
+            const { revision, sequence, length, action, domain, attribute } = this.decodeHeader(workingData);
+            const payload = workingData.subarray(7, 4 + length);
+            const crc = workingData[4 + length];
+            const crcCheck = generateCrc(workingData.subarray(0, 4 + length));
+    
+            console.assert(crc === crcCheck, `failed: crc check, expecting ${crcCheck} received ${crc}`);
+            console.debug(`[${this.host}:${this.port}] received data, position=${position}, sequence=${sequence}, action=${Action[action]}, functional_domain=${FunctionalDomain[domain]}, attribute=${attribute}, data=${workingData.toString("base64")}`);
+        
+            response.push(new AprilaireResponsePayload(this.host, this.port, revision, sequence, length, action, domain, attribute, payload, crc));
+    
+            const nextStart = 4 + length + 1;
+            workingData = workingData.subarray(nextStart);
+        
+            position = position + nextStart;
+            count++;
+        }
+    
+        return response;
+    }
+    
+    private decodeHeader (data: Buffer) {
+        try {
+            const revision: number = data.readUint8(0);
+            const sequence: number = data.readUint8(1);
+            const length: number = data.readUint16BE(2);
+            const action: Action = data.readUint8(4);
+            const domain: FunctionalDomain = data.readUint8(5);
+            const attribute: number = data.readUint8(6);
+            return { revision, sequence, length, action, domain, attribute };
+        } catch {
+            return { revision: 1, sequence: 0, length: 0, action: Action.None, domain: FunctionalDomain.None, attribute: 0 };
+        }
+    }
+
+    private sendCommand(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup, data: Buffer = Buffer.alloc(0)) {
         const header = Buffer.alloc(7);
         header.writeUint8(1, 0), // protocol revisoin
         header.writeUint8(this.sequence, 1); // message counter sequence
@@ -732,7 +740,7 @@ class AprilaireSocket extends EventEmitter {
         const frame = Buffer.alloc(payload.byteLength + 1, payload);
         frame.writeUint8(payloadCrc, frame.byteLength - 1);
 
-        console.debug(`queuing data, sequence=${this.sequence}, action=${action}, functional_domain=${domain}, attribute=${attribute}, data=${frame.toString("base64")}`);
+        console.debug(`[${this.host}:${this.port}] queuing data, sequence=${this.sequence}, action=${Action[action]}, functional_domain=${FunctionalDomain[domain]}, attribute=${attribute}, data=${frame.toString("base64")}`);
 
         // increment sequence for next command
         this.sequence = (this.sequence + 1) % 127;

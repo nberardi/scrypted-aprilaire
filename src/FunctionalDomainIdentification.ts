@@ -17,12 +17,29 @@ export class ThermostatNameResponse extends BasePayloadResponse {
 
 export class MacAddressResponse extends BasePayloadResponse {
     macAddress: string;
+    forceConnection: ForceConnectionType;
+    setting: HVACAutomationSetting;
+
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Identification, FunctionalDomainIdentification.MacAddress);
 
         const macAddressBytes = payload.subarray(0, 6);
         this.macAddress = macAddressBytes.toString("hex");
+
+        this.forceConnection = payload.readUint8(6);
+        this.setting = payload.readUint8(7);
     }
+}
+
+export enum ForceConnectionType {
+    NoAlertsOrReminders = 0,
+    AlertsAndReminders = 1,
+    WeatherUpdateRequired = 2
+}
+
+export enum HVACAutomationSetting {
+    HVAC = 0,
+    Automation = 1
 }
 
 export class RevisionAndModelResponse extends BasePayloadResponse {

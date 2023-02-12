@@ -36,7 +36,7 @@ export class CosRequest extends BasePayloadRequest {
             1,  // Thermostat Status
             1,  // IAQ Status
             1,  // Model & Revision
-            1,  // Support Module
+            0,  // Support Module
             0,  // Lockouts
         ]));
         payload.writeUInt8(1);
@@ -162,4 +162,35 @@ export enum AirCleaningStatus {
     EquipmentWait = 1,
     Active = 2,
     Off = 3
+}
+
+export class ThermostatErrorResponse extends BasePayloadResponse {
+    thermostatError: ThermostatError;
+
+    constructor(payload: Buffer) {
+        super(payload, FunctionalDomain.Status, FunctionalDomainStatus.ThermostatError);
+
+        this.responseError = payload.readUint8(0);
+    }
+}
+
+export enum ThermostatError {
+    NoError = 0,
+    E1BuiltInTempSensorOpen = 1,
+    E2BuiltInTempSensorShort = 2,
+    E3NonVolatileMemoryAccessError = 3,
+    E5ECMCommunicationLost = 5,
+    E6RemoteTempSensorOpen = 6,
+    E7RemoteTempSensorShort = 7,
+    E8SupportModuleTempLost = 8
+}
+
+export class OfflineResponse extends BasePayloadResponse {
+    offline: boolean;
+
+    constructor(payload: Buffer) {
+        super(payload, FunctionalDomain.Status, FunctionalDomainStatus.Offline);
+
+        this.offline = payload.readUint8(0) === 1;
+    }
 }

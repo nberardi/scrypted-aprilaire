@@ -87,3 +87,81 @@ export class HeatBlastResponse extends BasePayloadResponse {
         this.heatBlast = Boolean(payload.readUint8(0));
     }
 }
+
+
+
+export class AwaySettingsResponse extends BasePayloadResponse {
+    fan: FanModeSetting;
+    heatSetpoint: number;
+    coolSetpoint: number;
+    constructor(payload: Buffer) {
+        super(payload, FunctionalDomain.Scheduling, FunctionalDomainScheduling.AwaySettings);
+
+        const awayHeatMap = {
+            0: 15.5,
+            1: 16,
+            2: 16.5,
+            3: 17,
+            4: 17.5,
+            5: 18.5
+        };
+        
+        const awayCoolMap = {
+            0: 26.5,
+            1: 27,
+            2: 27.5,
+            3: 28.5,
+            4: 29,
+            5: 29.5
+        };
+
+        this.fan = payload.readUint8(0);
+        this.heatSetpoint = awayHeatMap[payload.readUint8(1)];
+        this.coolSetpoint = awayCoolMap[payload.readUint8(2)];
+    }
+}
+
+export class AwaySettingsRequest extends BasePayloadRequest {
+    fan: FanModeSetting
+    heatSetpoint: number;
+    coolSetpoint: number;
+    constructor() {
+        super(FunctionalDomain.Scheduling, FunctionalDomainScheduling.AwaySettings);
+    }
+
+    toBuffer(): Buffer {
+        if (this.heatSetpoint < 15.5 || this.heatSetpoint > 18.5) {
+            throw new Error("Heat setpoint must be between 15.5 and 18.5");
+        }
+
+        if (this.coolSetpoint < 26.5 || this.coolSetpoint > 29.5) {
+            throw new Error("Cool setpoint must be between 26.5 and 29.5");
+        }
+
+        const awayHeatMap = {
+            15.5: 0,
+            16: 1,
+            16.5: 2,
+            17: 3,
+            17.5: 4,
+            18: 5,
+            18.5: 5
+        };
+        
+        const awayCoolMap = {
+            26.5: 0,
+            27: 1,
+            27.5: 2,
+            28: 3,
+            28.5: 3,
+            29: 4,
+            29.5: 5
+        };
+
+        let payload = Buffer.alloc(3);
+        payload.writeUint8(this.fan, 0);
+        payload.writeUint8(awayHeatMap[this.heatSetpoint], 1);
+        payload.writeUint8(awayCoolMap[this.coolSetpoint], 2);
+        return payload;
+    }
+}
