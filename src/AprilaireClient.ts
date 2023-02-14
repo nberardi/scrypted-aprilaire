@@ -650,7 +650,7 @@ class AprilaireSocket extends EventEmitter {
 
         this.client.on("data", (data: Buffer) => {
             try {
-                console.group(self.format(`received data, data=${data.toString("base64")}`), data);
+                console.group(self.format(`received data, data=${data.toString("base64")}`));
                 self.parseResponse(data).forEach(element => {
                     const payload = element.toObject();
 
