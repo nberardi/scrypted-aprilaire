@@ -107,8 +107,6 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
     constructor(nativeId: string, client: AprilaireClient) {
         super(nativeId);
 
-        const self = this;
-
         this.humiditySetting = {
             mode: HumidityMode.Off,
             availableModes: [HumidityMode.Off]
@@ -120,9 +118,7 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
         }
 
         this.client = client;
-        this.client.on("response", (response: BasePayloadResponse) => {
-            self.processResponse(response);
-        });
+        this.client.on("response", this.processResponse.bind(this));
     }
 
     async getRefreshFrequency(): Promise<number> {
@@ -334,21 +330,35 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
         }
 
         else if (response instanceof ControllingSensorsStatusAndValueResponse) {
-            if (response.indoorTemperatureStatus === TemperatureSensorStatus.NoError) 
-                this.temperature = response.indoorTemperature;
-            else if (response.indoorTemperatureStatus !== TemperatureSensorStatus.NotInstalled)
-                this.console.error("Indoor temperature sensor error: " + response.indoorTemperatureStatus);
+            try {
+                this.console.group("Controlling Sensors Status And Value");
 
-            if (response.indoorHumidityStatus === HumiditySensorStatus.NoError)
-                this.humidity = response.indoorHumidity;
-            else if (response.indoorHumidityStatus !== HumiditySensorStatus.NotInstalled)
-                this.console.error("Indoor humidity sensor error: " + response.indoorHumidityStatus);
+                if (response.indoorTemperatureStatus === TemperatureSensorStatus.NoError) {
+                    this.temperature = response.indoorTemperature;
+                    this.console.info("indoor temperature: " + this.temperature + " C");
+                }
+                else if (response.indoorTemperatureStatus !== TemperatureSensorStatus.NotInstalled)
+                    this.console.error("indoor temperature sensor error: " + response.indoorTemperatureStatus);
 
-            if (response.outdoorTemperatureStatus !== TemperatureSensorStatus.NoError && response.outdoorTemperatureStatus !== TemperatureSensorStatus.NotInstalled)
-                this.console.error("Outdoor temperature sensor error: " + response.outdoorTemperatureStatus);
+                if (response.indoorHumidityStatus === HumiditySensorStatus.NoError) {
+                    this.humidity = response.indoorHumidity;
+                    this.console.info("indoor humidity: " + this.humidity + "%");
+                }
+                else if (response.indoorHumidityStatus !== HumiditySensorStatus.NotInstalled)
+                    this.console.error("indoor humidity sensor error: " + response.indoorHumidityStatus);
 
-            if (response.outdoorHumidityStatus !== HumiditySensorStatus.NoError && response.outdoorHumidityStatus !== HumiditySensorStatus.NotInstalled)
-                this.console.error("Outdoor humidity sensor error: " + response.outdoorHumidityStatus);
+                if (response.outdoorTemperatureStatus === TemperatureSensorStatus.NoError) {
+                    this.console.info("outdoor temperature: " + response.outdoorTemperature + " C");
+                } else if (response.outdoorTemperatureStatus !== TemperatureSensorStatus.NotInstalled)
+                    this.console.error("outdoor temperature sensor error: " + response.outdoorTemperatureStatus);
+
+                if (response.outdoorHumidityStatus === HumiditySensorStatus.NoError) {
+                    this.console.info("outdoor humidity: " + response.outdoorHumidity + "%");
+                } else if (response.outdoorHumidityStatus !== HumiditySensorStatus.NotInstalled)
+                    this.console.error("outdoor humidity sensor error: " + response.outdoorHumidityStatus);
+            } finally {
+                this.console.groupEnd();
+            }
         }
 
         else if (response instanceof ThermostatStatusResponse) {
@@ -385,41 +395,51 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
         }
 
         else if (response instanceof ThermostatAndIAQAvailableResponse) {
-            switch(response.thermostat) {
-                case ThermostatCapabilities.Cool:
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Cool];
-                    break;
-                case ThermostatCapabilities.Heat:
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat];
-                    break;
-                case ThermostatCapabilities.HeatAndCool: 
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
-                    break;
-                case ThermostatCapabilities.HeatCoolAndAuto:
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
-                    break;
-                case ThermostatCapabilities.HeatEmergencyHeatAndCool:
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
-                    break;
-                case ThermostatCapabilities.HeatEmergencyHeatCoolAndAuto:
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
-                    break;
+            try {
+                this.console.group("Thermostat and IAQ Available");
+
+                switch(response.thermostat) {
+                    case ThermostatCapabilities.Cool:
+                        this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Cool];
+                        break;
+                    case ThermostatCapabilities.Heat:
+                        this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat];
+                        break;
+                    case ThermostatCapabilities.HeatAndCool: 
+                        this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
+                        break;
+                    case ThermostatCapabilities.HeatCoolAndAuto:
+                        this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
+                        break;
+                    case ThermostatCapabilities.HeatEmergencyHeatAndCool:
+                        this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
+                        break;
+                    case ThermostatCapabilities.HeatEmergencyHeatCoolAndAuto:
+                        this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
+                        break;
+                }
+
+                this.console.info("thermostat modes: " + this.thermostatAvailableModes);
+
+                let modes: HumidityMode[] = [HumidityMode.Off];
+                if (response.humidification)
+                    modes.push(HumidityMode.Humidify);
+                if (response.dehumidification)
+                    modes.push(HumidityMode.Dehumidify);
+                if (response.humidification && response.dehumidification)
+                    modes.push(HumidityMode.Auto);
+
+                humiditySetting.availableModes = modes;
+                this.console.info("humidity modes: " + humiditySetting.availableModes);
+
+                this.storageSettings.values.humidifierAvailable = response.humidification;
+                this.storageSettings.values.dehumidifierAvailable = response.dehumidification;
+                this.storageSettings.values.freshAirVentilationAvailable = response.freshAirVentilation;
+                this.storageSettings.values.airCleaningAvailable = response.airCleaning;
+                this.console.info(`humidifier: ${response.humidification}, dehumidifier: ${response.dehumidification}, fresh air ventilation: ${response.freshAirVentilation}, air cleaning: ${response.airCleaning}`);
+            } finally {
+                this.console.groupEnd();
             }
-
-            let modes: HumidityMode[] = [HumidityMode.Off];
-            if (response.humidification)
-                modes.push(HumidityMode.Humidify);
-            if (response.dehumidification)
-                modes.push(HumidityMode.Dehumidify);
-            if (response.humidification && response.dehumidification)
-                modes.push(HumidityMode.Auto);
-
-            humiditySetting.availableModes = modes;
-
-            this.storageSettings.values.humidifierAvailable = response.humidification;
-            this.storageSettings.values.dehumidifierAvailable = response.dehumidification;
-            this.storageSettings.values.freshAirVentilationAvailable = response.freshAirVentilation;
-            this.storageSettings.values.airCleaningAvailable = response.airCleaning;
         }
 
         else if (response instanceof HumidificationSetpointResponse) {
