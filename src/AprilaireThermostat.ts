@@ -6,8 +6,6 @@ import { ThermostatSetpointAndModeSettingsRequest, FanModeSetting, Dehumidificat
 import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus } from './FunctionalDomainSensors';
 import { ScaleRequest, TemperatureScale, ScaleResponse, ThermostatInstallerSettingsResponse } from './FunctionalDomainSetup';
 import { ThermostatStatusResponse, HeatingStatus, CoolingStatus, IAQStatusResponse, HumidificationStatus, DehumidificationStatus, SyncRequest, VentilationStatus, AirCleaningStatus } from './FunctionalDomainStatus';
-import { read } from 'fs';
-import { setEngine } from 'crypto';
 import { HeatBlastRequest, HeatBlastResponse, HoldType, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 
 export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, Online, Settings, Refresh, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySetting, HumiditySensor, Fan {
@@ -336,11 +334,21 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
         }
 
         else if (response instanceof ControllingSensorsStatusAndValueResponse) {
-            if (response.indoorTemperatureStatus === TemperatureSensorStatus.NoError)
+            if (response.indoorTemperatureStatus === TemperatureSensorStatus.NoError) 
                 this.temperature = response.indoorTemperature;
+            else if (response.indoorTemperatureStatus !== TemperatureSensorStatus.NotInstalled)
+                this.console.error("Indoor temperature sensor error: " + response.indoorTemperatureStatus);
 
             if (response.indoorHumidityStatus === HumiditySensorStatus.NoError)
                 this.humidity = response.indoorHumidity;
+            else if (response.indoorHumidityStatus !== HumiditySensorStatus.NotInstalled)
+                this.console.error("Indoor humidity sensor error: " + response.indoorHumidityStatus);
+
+            if (response.outdoorTemperatureStatus !== TemperatureSensorStatus.NoError && response.outdoorTemperatureStatus !== TemperatureSensorStatus.NotInstalled)
+                this.console.error("Outdoor temperature sensor error: " + response.outdoorTemperatureStatus);
+
+            if (response.outdoorHumidityStatus !== HumiditySensorStatus.NoError && response.outdoorHumidityStatus !== HumiditySensorStatus.NotInstalled)
+                this.console.error("Outdoor humidity sensor error: " + response.outdoorHumidityStatus);
         }
 
         else if (response instanceof ThermostatStatusResponse) {

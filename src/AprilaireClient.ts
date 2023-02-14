@@ -520,14 +520,18 @@ export class AprilaireResponsePayload {
         this.crc = crc;
     }
 
+    private format(message: string): string {
+        return `[${new Date().toISOString()}] [${this.host}:${this.port}] ${message}`;
+    }
+
     toObject(): BasePayloadResponse | undefined {
         if (this.action === Action.Write || this.action === Action.ReadRequest || this.action === Action.None) {
-            console.warn(`[${this.host}:${this.port}] skipping, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`);
+            console.warn(this.format(`skipping, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`));
             return undefined;
         }
 
         if (this.action === Action.NAck) {
-            console.error(`[${this.host}:${this.port}] received error, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`);
+            console.error(this.format(`received error, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`));
             throw Error(`[${this.host}:${this.port}] received error, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`);
         }
 
@@ -600,7 +604,7 @@ export class AprilaireResponsePayload {
                 break;
         }
 
-        console.warn(`[${this.host}:${this.port}] not implimented response payload, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`);
+        console.warn(this.format(`not implimented response payload, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`));
         return new BasePayloadResponse(this.payload, this.domain, this.attribute);
     }
 }
@@ -624,6 +628,10 @@ class AprilaireSocket extends EventEmitter {
         this.port = port;
     }
 
+    private format(message: string): string {
+        return `[${new Date().toISOString()}] [${this.host}:${this.port}] ${message}`;
+    }
+
     private setupSocket() {
         const self = this;
 
@@ -634,33 +642,38 @@ class AprilaireSocket extends EventEmitter {
         this.client = new Socket();
 
         this.client.on("close", (hadError: boolean) => {
-            console.debug(`[${this.host}:${this.port}] close`, hadError);
+            console.debug(self.format(`close`), hadError);
 
             self._connected = false;
             self.emit('disconnected');
         });
 
         this.client.on("data", (data: Buffer) => {
-            self.parseResponse(data).forEach(element => {
-                const payload = element.toObject();
+            try {
+                console.group(self.format(`received data, data=${data.toString("base64")}`), data);
+                self.parseResponse(data).forEach(element => {
+                    const payload = element.toObject();
 
-                if (payload)
-                    self.emit('response', payload);
-            });
+                    if (payload)
+                        self.emit('response', payload);
+                });
+            } finally {
+                console.groupEnd();
+            }
         });
 
         this.client.on("ready", () => { 
-            console.debug(`[${this.host}:${this.port}] ready`);
+            console.debug(self.format(`ready`));
 
             self._connected = true;
             self.emit('connected');
         });
 
-        this.client.on("connect", () => { console.debug(`[${this.host}:${this.port}] connect`); });
-        this.client.on("drain", () => { console.debug(`[${this.host}:${this.port}] drain`); });
-        this.client.on("end", () => { console.debug(`[${this.host}:${this.port}] end`); });
-        this.client.on("error", (err: Error) => { console.debug(`[${this.host}:${this.port}] error: ${err}`); });
-        this.client.on("timeout", () => { console.debug(`[${this.host}:${this.port}] timeout`); });
+        this.client.on("connect", () => { console.debug(self.format(`connect`)); });
+        this.client.on("drain", () => { console.debug(self.format(`drain`)); });
+        this.client.on("end", () => { console.debug(self.format(`end`)); });
+        this.client.on("error", (err: Error) => { console.debug(self.format(`error: ${err}`)); });
+        this.client.on("timeout", () => { console.debug(self.format(`timeout`)); });
     }
 
     connect() {
@@ -697,7 +710,7 @@ class AprilaireSocket extends EventEmitter {
             const crcCheck = generateCrc(workingData.subarray(0, 4 + length));
     
             console.assert(crc === crcCheck, `failed: crc check, expecting ${crcCheck} received ${crc}`);
-            console.debug(`[${this.host}:${this.port}] received data, position=${position}, sequence=${sequence}, action=${Action[action]}, functional_domain=${FunctionalDomain[domain]}, attribute=${attribute}, data=${workingData.toString("base64")}`);
+            console.debug(this.format(`received data part, position=${position}, sequence=${sequence}, action=${Action[action]}, functional_domain=${FunctionalDomain[domain]}, attribute=${attribute}, data=${workingData.toString("base64")}`));
         
             response.push(new AprilaireResponsePayload(this.host, this.port, revision, sequence, length, action, domain, attribute, payload, crc));
     
@@ -740,7 +753,7 @@ class AprilaireSocket extends EventEmitter {
         const frame = Buffer.alloc(payload.byteLength + 1, payload);
         frame.writeUint8(payloadCrc, frame.byteLength - 1);
 
-        console.debug(`[${this.host}:${this.port}] queuing data, sequence=${this.sequence}, action=${Action[action]}, functional_domain=${FunctionalDomain[domain]}, attribute=${attribute}, data=${frame.toString("base64")}`);
+        console.debug(this.format(`queuing data, sequence=${this.sequence}, action=${Action[action]}, functional_domain=${FunctionalDomain[domain]}, attribute=${attribute}, data=${frame.toString("base64")}`));
 
         // increment sequence for next command
         this.sequence = (this.sequence + 1) % 127;
