@@ -37,7 +37,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         super(nativeId);     
     }
 
-    private responseReceived(response: BasePayloadResponse, responseClient: AprilaireClient, self: AprilairePlugin) {
+    private responseReceived(response: BasePayloadResponse, responseClient: AprilaireClient) {
         if (response instanceof ThermostatInstallerSettingsResponse) {
             if (response.outdoorSensor === OutdoorSensorStatus.Automation)
                 if (this.automatedOutdoorSensors.indexOf(responseClient.mac) === -1)
@@ -55,7 +55,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 request.endDate = response.endDate;
                 
                 // write teh hold to the other thermostats
-                self.clients.forEach((client, mac) => {
+                this.clients.forEach((client, mac) => {
                     if (mac === responseClient.mac)
                         return;
 
@@ -68,12 +68,14 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             if (response.outdoorTemperatureStatus !== TemperatureSensorStatus.NoError)
                 return;
 
-            self.automatedOutdoorSensors.filter(mac => mac !== responseClient.mac).forEach(mac => {
-                let request = new WrittenOutdoorTemperatureValueRequest();
-                request.temperature = response.outdoorTemperature;
+            this.automatedOutdoorSensors
+                .filter(mac => mac !== responseClient.mac)
+                .forEach(mac => {
+                    let request = new WrittenOutdoorTemperatureValueRequest();
+                    request.temperature = response.outdoorTemperature;
 
-                const client = self.clients.get(mac);
-                client.write(request);
+                    const client = this.clients.get(mac);
+                    client.write(request);
             });
         }
     }
@@ -105,9 +107,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         const client = new AprilaireClient(host, port);
         const self = this;
 
-        client.on("response", (response, client) => {
-            self.responseReceived(response, client, self);
-        });
+        client.on("response", self.responseReceived.bind(self));
 
         return new Promise<any>((resolve) => {
             client.connect();

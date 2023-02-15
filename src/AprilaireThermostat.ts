@@ -5,7 +5,7 @@ import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-se
 import { ThermostatSetpointAndModeSettingsRequest, FanModeSetting, DehumidificationSetpointRequest, HumidificationSetpointRequest, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, HumidificationSetpointResponse, DehumidificationSetpointResponse, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode } from './FunctionalDomainControl';
 import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus } from './FunctionalDomainSensors';
 import { ScaleRequest, TemperatureScale, ScaleResponse, ThermostatInstallerSettingsResponse } from './FunctionalDomainSetup';
-import { ThermostatStatusResponse, HeatingStatus, CoolingStatus, IAQStatusResponse, HumidificationStatus, DehumidificationStatus, SyncRequest, VentilationStatus, AirCleaningStatus } from './FunctionalDomainStatus';
+import { ThermostatStatusResponse, HeatingStatus, CoolingStatus, IAQStatusResponse, HumidificationStatus, DehumidificationStatus, SyncRequest, VentilationStatus, AirCleaningStatus, OfflineResponse } from './FunctionalDomainStatus';
 import { HeatBlastRequest, HeatBlastResponse, HoldType, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 
 export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, Online, Settings, Refresh, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySetting, HumiditySensor, Fan {
@@ -36,7 +36,7 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
             type: "boolean",
             description: "The thermostat is in Heat Blast mode.",
             noStore: true,
-            onPut: (oldValue, newValue) => this.setHeatBlast(newValue)
+            onPut: this.setHeatBlast.bind(this)
         },
         hold: {
             title: "Temperature Hold",
@@ -44,7 +44,7 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
             choices: ["Schedule", "Temporary", "Permanent", "Away", "Vacation"],
             description: "The type of temperature hold the thermostat is following.",
             noStore: true,
-            onPut: (oldValue, newValue) => this.setHold(newValue)
+            onPut: this.setHold.bind(this)
         },
         humidifierAvailable: {
             type: "boolean",
@@ -188,7 +188,7 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
         return this.setThermostatMode(ThermostatMode.On);
     }
 
-    setHeatBlast(newValue: any) {
+    setHeatBlast(oldValue: any, newValue: any) {
         if (newValue === this._heatBlastState)
             return;
 
@@ -198,7 +198,7 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
         this._heatBlastState = request.heatBlast;
     }
     
-    setHold(newValue: any) {
+    setHold(oldValue: any, newValue: any) {
         if (newValue === this._holdState)
             return;
 
@@ -521,6 +521,10 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
             this.thermostatSetpointHigh = Math.max(response.coolSetpoint, response.heatSetpoint);
 
             fan.mode = response.fan === FanModeSetting.Auto ? FanMode.Auto : FanMode.Manual;
+        }
+
+        else if (response instanceof OfflineResponse) {
+            this.on = response.offline === false;
         }
 
         if (!this.thermostatActiveMode)
