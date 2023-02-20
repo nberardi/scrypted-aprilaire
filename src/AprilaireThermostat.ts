@@ -122,7 +122,7 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
     }
 
     async getRefreshFrequency(): Promise<number> {
-        return 600; // every 10 mins
+        return 1800; // every 10 mins
     }
 
     async sync(): Promise<void> {
@@ -131,7 +131,8 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
     }
 
     async refresh(refreshInterface: string, userInitiated: boolean): Promise<void> {
-        await this.sync();
+        // this needs to be implemented to support the refresh frequency
+        this.console.info("refreshing", refreshInterface, userInitiated);
     }
 
     async setFan(fan: FanState): Promise<void> {

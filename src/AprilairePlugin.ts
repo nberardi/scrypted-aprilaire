@@ -4,9 +4,10 @@ import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { AprilaireThermostat } from './AprilaireThermostat';
-import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, WrittenOutdoorTemperatureValueRequest } from './FunctionalDomainSensors';
+import { ControllingSensorsStatusAndValueRequest, ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, WrittenOutdoorTemperatureValueRequest } from './FunctionalDomainSensors';
 import { ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
 import { HoldType, ScheduleHoldRequest, ScheduleHoldResponse } from './FunctionalDomainScheduling';
+import { SyncRequest } from './FunctionalDomainStatus';
 
 const { deviceManager } = sdk;
 
@@ -151,6 +152,9 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
 
                 self.clients.set(d.nativeId, client);
                 self.thermostats.set(d.nativeId, t);
+
+                // send a sync request to get a refresh of the current state
+                client.write(new SyncRequest());
 
                 resolve({nativeId: d.nativeId, device: d, thermostat: t });
             });

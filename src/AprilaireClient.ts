@@ -23,12 +23,20 @@ export class AprilaireClient extends EventEmitter {
     model: string;
     mac: string; 
     system: ThermostatAndIAQAvailableResponse;
-    sensors: ControllingSensorsStatusAndValueResponse;
 
     constructor(host: string, port: number) {
         super();
 
         this.client = new AprilaireSocket(host, port);
+    }
+
+    read(request: BasePayloadRequest) {
+        if (!this.client.connected) {
+            console.warn("socket not connected, re-establishing connection");
+            this.connect();
+        }
+
+        this.client.readObjectRequest(request);
     }
 
     write(request: BasePayloadRequest) {
@@ -37,7 +45,7 @@ export class AprilaireClient extends EventEmitter {
             this.connect();
         }
 
-        this.client.sendObjectRequest(Action.Write, request);
+        this.client.writeObjectRequest(request);
     }
 
     connect() {
@@ -49,8 +57,7 @@ export class AprilaireClient extends EventEmitter {
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.RevisionAndModel);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
-            self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Sensors, FunctionalDomainSensors.ControllingSensorValues);
-            self.client.sendObjectRequest(Action.Write, new CosRequest());
+            self.client.sendObjectRequest(new CosRequest());
     
             self.emit("connected", self);
         });
@@ -79,7 +86,7 @@ export class AprilaireClient extends EventEmitter {
             this.name = response.name;
 
         else if (response instanceof RevisionAndModelResponse) {
-            this.firmware = `${response.firmwareMajor}.${response.firmwareMinor}`;
+            this.firmware = `${response.firmwareMajor}.${response.firmwareMinor.toFixed(2)}`;
             this.hardware = response.hardware;
             this.model = response.model;
         }
@@ -87,10 +94,7 @@ export class AprilaireClient extends EventEmitter {
         else if (response instanceof ThermostatAndIAQAvailableResponse)
             this.system = response;
 
-        else if (response instanceof ControllingSensorsStatusAndValueResponse)
-            this.sensors = response;
-
-        if (!this.ready && this.mac && this.firmware && this.system && this.sensors && this.name) {
+        if (!this.ready && this.mac && this.firmware && this.system && this.name) {
             this.ready = true;
             this.emit("ready", this);
         }
@@ -686,8 +690,14 @@ class AprilaireSocket extends EventEmitter {
         this.client = undefined;
     }
 
-    sendObjectRequest(action: Action, request: BasePayloadRequest) {
-        this.sendCommand(action, request.domain, request.attribute, request.toBuffer());
+    readObjectRequest(request: BasePayloadRequest) {
+        const buffer = request.toBuffer();        
+        this.sendCommand(Action.ReadRequest, request.domain, request.attribute, buffer);
+    }
+
+    writeObjectRequest(request: BasePayloadRequest) {
+        const buffer = request.toBuffer();        
+        this.sendCommand(Action.Write, request.domain, request.attribute, buffer);
     }
 
     sendRequest(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
