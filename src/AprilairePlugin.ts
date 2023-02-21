@@ -8,6 +8,7 @@ import { ControllingSensorsStatusAndValueRequest, ControllingSensorsStatusAndVal
 import { ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
 import { HoldType, ScheduleHoldRequest, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 import { SyncRequest } from './FunctionalDomainStatus';
+import { setInterval } from 'node:timers';
 
 const { deviceManager } = sdk;
 
@@ -17,6 +18,13 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             title: "Sync Outdoor Sensors",
             type: "boolean",
             description: "If one of your thermostats has an outdoor sensor, allow the value to be synced to your other thermostats that don't have outdoor sensors installed."
+        },
+        syncOutdoorSensorInterval: {
+            title: "Sync Outdoor Sensor Interval",
+            type: "number",
+            defaultValue: 1,
+            description: "The number of minutes between how often to sync the outdoor sensor value to thermostats that don't have an outdoor sensor installed.",
+            onPut: this.setupOutdoorsSensorsInterval.bind(this)
         },
         syncAwayHold: {
             title: "Sync Away Hold",
@@ -33,9 +41,35 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     clients = new Map<string, AprilaireClient>();
     thermostats = new Map<string, AprilaireThermostat>();
     automatedOutdoorSensors: string[] = [];
+    automatedOutdoorSensorsTimer: NodeJS.Timer;
 
     constructor(nativeId?: string) {
-        super(nativeId);     
+        super(nativeId);
+
+        this.setupOutdoorsSensorsInterval(0, this.storageSettings.values.syncOutdoorSensorInterval);
+    }
+
+    private setupOutdoorsSensorsInterval(oldValue: any, newValue: any) {
+        if (newValue === 0) {
+            clearInterval(this.automatedOutdoorSensorsTimer);
+            return;
+        }
+
+        clearInterval(this.automatedOutdoorSensorsTimer);
+        this.automatedOutdoorSensorsTimer = setInterval(this.refreshOutdoorSensors.bind(this), newValue * 60 * 1000);
+    }
+
+    private async refreshOutdoorSensors() {
+        if (this.storageSettings.values.syncOutdoorSensor === false)
+            return;
+
+        this.clients.forEach((client, mac) => {
+            if (this.automatedOutdoorSensors.indexOf(mac) >= 0)
+                return;
+
+            let request = new ControllingSensorsStatusAndValueRequest();
+            client.read(request);
+        });
     }
 
     private responseReceived(response: BasePayloadResponse, responseClient: AprilaireClient) {
