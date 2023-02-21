@@ -54,7 +54,7 @@ export class HumidificationSetpointRequest extends BasePayloadRequest {
     on: boolean;
     humidificationSetpoint: number;
     constructor() {
-        super(FunctionalDomain.Control, FunctionalDomainControl.HumidificationSetponit);
+        super(FunctionalDomain.Control, FunctionalDomainControl.HumidificationSetpoint);
     }
 
     toBuffer(): Buffer {
@@ -79,7 +79,7 @@ export class HumidificationSetpointResponse extends BasePayloadResponse {
     on: boolean;
     humidificationSetpoint: number;
     constructor(payload: Buffer) {
-        super(payload, FunctionalDomain.Control, FunctionalDomainControl.HumidificationSetponit);
+        super(payload, FunctionalDomain.Control, FunctionalDomainControl.HumidificationSetpoint);
 
         this.on = payload.readUint8(0) !== 0;
         this.humidificationSetpoint = payload.readUint8(0);

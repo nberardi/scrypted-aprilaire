@@ -78,6 +78,12 @@ export class ThermostatStatusResponse extends BasePayloadResponse {
     }
 }
 
+export class ThermostatStatusRequest extends BasePayloadRequest {
+    constructor() {
+        super(FunctionalDomain.Status, FunctionalDomainStatus.ThermostatStatus);
+    }
+}
+
 export enum HeatingStatus {
     NotActive = 0,
     EquipmentWait,

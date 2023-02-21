@@ -3,9 +3,9 @@ import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
 import { ThermostatSetpointAndModeSettingsRequest, FanModeSetting, DehumidificationSetpointRequest, HumidificationSetpointRequest, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, HumidificationSetpointResponse, DehumidificationSetpointResponse, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode } from './FunctionalDomainControl';
-import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus } from './FunctionalDomainSensors';
+import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus, ControllingSensorsStatusAndValueRequest } from './FunctionalDomainSensors';
 import { ScaleRequest, TemperatureScale, ScaleResponse, ThermostatInstallerSettingsResponse } from './FunctionalDomainSetup';
-import { ThermostatStatusResponse, HeatingStatus, CoolingStatus, IAQStatusResponse, HumidificationStatus, DehumidificationStatus, SyncRequest, VentilationStatus, AirCleaningStatus, OfflineResponse } from './FunctionalDomainStatus';
+import { ThermostatStatusResponse, HeatingStatus, CoolingStatus, IAQStatusResponse, HumidificationStatus, DehumidificationStatus, SyncRequest, VentilationStatus, AirCleaningStatus, OfflineResponse, ThermostatStatusRequest } from './FunctionalDomainStatus';
 import { HeatBlastRequest, HeatBlastResponse, HoldType, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 
 export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, Online, Settings, Refresh, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySetting, HumiditySensor, Fan {
@@ -131,8 +131,16 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
     }
 
     async refresh(refreshInterface: string, userInitiated: boolean): Promise<void> {
+        if (refreshInterface === "TemperatureSetting") {
+            this.client.read(new ThermostatStatusRequest());
+            return;
+        } else if (refreshInterface === "Thermometer" || refreshInterface === "HumiditySensor" || refreshInterface === "Fan") {
+            this.client.read(new ControllingSensorsStatusAndValueRequest());
+            return;
+        }
+
         // this needs to be implemented to support the refresh frequency
-        this.console.info("refreshing", refreshInterface, userInitiated);
+        this.console.warn("refreshing", refreshInterface, userInitiated);
     }
 
     async setFan(fan: FanState): Promise<void> {

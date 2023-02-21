@@ -36,10 +36,6 @@ export class ControllingSensorsStatusAndValueRequest extends BasePayloadRequest 
     constructor() {
         super(FunctionalDomain.Sensors, FunctionalDomainSensors.ControllingSensorValues);
     }
-
-    toBuffer(): Buffer {
-        return Buffer.alloc(0);
-    }
 }
 
 export class ControllingSensorsStatusAndValueResponse extends BasePayloadResponse {

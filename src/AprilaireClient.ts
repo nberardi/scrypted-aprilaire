@@ -2,8 +2,8 @@
 // https://github.com/chamberlain2007/aprilaire-ha
 // without his exploration and ground work, it would have taken much longer to get this up and running
 
+import net from 'node:net';
 import { EventEmitter } from "events";
-import { Socket } from "node:net";
 import { ThermostatAndIAQAvailableResponse, FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse, ThermostatSetpointAndModeSettingsResponse } from "./FunctionalDomainControl";
 import { MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse } from "./FunctionalDomainIdentification";
 import { ControllingSensorsStatusAndValueResponse, WrittenOutdoorTemperatureValueResponse } from "./FunctionalDomainSensors";
@@ -30,7 +30,7 @@ export class AprilaireClient extends EventEmitter {
         this.client = new AprilaireSocket(host, port);
     }
 
-    read(request: BasePayloadRequest) {
+    read(request: BasePayloadRequest): void {
         if (!this.client.connected) {
             console.warn("socket not connected, re-establishing connection");
             this.connect();
@@ -57,7 +57,7 @@ export class AprilaireClient extends EventEmitter {
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.RevisionAndModel);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
-            self.client.sendObjectRequest(new CosRequest());
+            self.client.writeObjectRequest(new CosRequest());
     
             self.emit("connected", self);
         });
@@ -159,7 +159,7 @@ export enum FunctionalDomainControl {
     ThermstateSetpointAndModeSettings = 1,
     IncrementSetpoint = 2,
     DehumidificationSetpoint = 3,
-    HumidificationSetponit = 4,
+    HumidificationSetpoint = 4,
     FreshAirSetting = 5,
     AirCleaningSetting = 6,
     ThermostatAndIAQAvailable = 7
@@ -576,7 +576,7 @@ export class AprilaireResponsePayload {
                         return new AirCleaningSettingsResponse(this.payload);
                     case FunctionalDomainControl.DehumidificationSetpoint:
                         return new DehumidificationSetpointResponse(this.payload);
-                    case FunctionalDomainControl.HumidificationSetponit:
+                    case FunctionalDomainControl.HumidificationSetpoint:
                         return new HumidificationSetpointResponse(this.payload);
                     case FunctionalDomainControl.ThermstateSetpointAndModeSettings:
                         return new ThermostatSetpointAndModeSettingsResponse(this.payload);
@@ -617,7 +617,7 @@ class AprilaireSocket extends EventEmitter {
     host: string;
     port: number;
     
-    private client: Socket;
+    private client: net.Socket;
     private sequence: number = 0;
     private _connected: boolean = true;
 
@@ -643,7 +643,7 @@ class AprilaireSocket extends EventEmitter {
             this.disconnect();
 
         this._connected = false;
-        this.client = new Socket();
+        this.client = new net.Socket();
 
         this.client.on("close", (hadError: boolean) => {
             console.debug(self.format(`close`), hadError);
@@ -690,9 +690,8 @@ class AprilaireSocket extends EventEmitter {
         this.client = undefined;
     }
 
-    readObjectRequest(request: BasePayloadRequest) {
-        const buffer = request.toBuffer();        
-        this.sendCommand(Action.ReadRequest, request.domain, request.attribute, buffer);
+    readObjectRequest(request: BasePayloadRequest) { 
+        this.sendCommand(Action.ReadRequest, request.domain, request.attribute);
     }
 
     writeObjectRequest(request: BasePayloadRequest) {
