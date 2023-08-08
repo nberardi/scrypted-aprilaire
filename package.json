@@ -1,6 +1,6 @@
 {
   "name": "scrypted-aprilaire",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Scrypted plugin for Aprilaire Home Automation",
   "author": "nberardi",
   "license": "MIT",
@@ -48,7 +48,7 @@
     "@types/node": "^16.11.7"
   },
   "devDependencies": {
-    "@scrypted/sdk": "^0.1.18",
+    "@scrypted/sdk": "^0.2.103",
     "webpack-bundle-analyzer": "^4.5.0"
   }
 }

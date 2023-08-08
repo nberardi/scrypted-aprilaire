@@ -1,4 +1,4 @@
-import { HumiditySettingStatus, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode, Fan, FanState, FanMode, FanStatus, Refresh } from '@scrypted/sdk';
+import { HumiditySettingStatus, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode, Fan, FanState, FanMode, FanStatus, Refresh, TemperatureCommand } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
@@ -212,6 +212,57 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
             return;
 
         this.console.error("setHold function status is work still needs to be done");
+    }
+
+    async setTemperature(command: TemperatureCommand): Promise<void> {
+        let request = new ThermostatSetpointAndModeSettingsRequest();
+
+        let { mode, setpoint } = command;
+
+        if (mode) {
+            switch(mode) {
+                case ThermostatMode.On:
+                case ThermostatMode.Auto:
+                case ThermostatMode.HeatCool:
+                    request.mode = TMode.Auto;
+                    break;
+                
+                case ThermostatMode.Cool:
+                    request.mode = TMode.Cool;
+                    break;
+    
+                case ThermostatMode.Heat:
+                    request.mode = TMode.Heat;
+                    break;
+    
+                case ThermostatMode.Off:
+                case ThermostatMode.FanOnly:
+                    request.mode = TMode.Off;
+                    break;
+            }
+        }
+
+        if (setpoint) {
+            if (typeof setpoint === 'number') {
+                switch(mode ?? this.thermostatMode) {
+                    case ThermostatMode.Heat:
+                        request.heatSetpoint = setpoint;
+                        break;
+                    case ThermostatMode.Cool:
+                        request.coolSetpoint = setpoint;
+                        break;
+                    default:
+                        request.heatSetpoint = setpoint;
+                        break;
+                }
+            }
+            else {
+                request.coolSetpoint = Math.max(setpoint[0], setpoint[1]);
+                request.heatSetpoint = Math.min(setpoint[0], setpoint[1]);
+            }
+        }
+
+        this.client.write(request);
     }
 
     async setTemperatureUnit(temperatureUnit: TemperatureUnit): Promise<void> {

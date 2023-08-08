@@ -49,6 +49,11 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         this.setupOutdoorsSensorsInterval(0, this.storageSettings.values.syncOutdoorSensorInterval);
     }
 
+    async releaseDevice(id: string, nativeId: string): Promise<void> {
+        if (this.thermostats.has(nativeId))
+            this.thermostats.delete(nativeId);
+    }
+
     private setupOutdoorsSensorsInterval(oldValue: any, newValue: any) {
         if (newValue === 0) {
             clearInterval(this.automatedOutdoorSensorsTimer);
