@@ -1,4 +1,4 @@
-import sdk, { Device, DeviceCreator, DeviceCreatorSettings, ScryptedDeviceType, ScryptedInterface, SettingValue } from '@scrypted/sdk';
+import sdk, { Device, DeviceBase, DeviceCreator, DeviceCreatorSettings, ScryptedDevice, ScryptedDeviceType, ScryptedInterface, SettingValue, TemperatureUnit, Thermometer } from '@scrypted/sdk';
 import { DeviceProvider, ScryptedDeviceBase, Setting, Settings } from '@scrypted/sdk';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { AprilaireClient } from './AprilaireClient';
@@ -9,8 +9,9 @@ import { ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './Func
 import { HoldType, ScheduleHoldRequest, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 import { SyncRequest } from './FunctionalDomainStatus';
 import { setInterval } from 'node:timers';
+import { AprilaireOutdoorThermometer } from './AprilaireOutdoorThermometer';
 
-const { deviceManager } = sdk;
+const { deviceManager, systemManager } = sdk;
 
 export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvider, DeviceCreator, Settings {
     storageSettings = new StorageSettings(this, {
@@ -40,6 +41,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
 
     clients = new Map<string, AprilaireClient>();
     thermostats = new Map<string, AprilaireThermostat>();
+    outdoorSensors = new Map<string, AprilaireOutdoorThermometer>();
     automatedOutdoorSensors: string[] = [];
     automatedOutdoorSensorsTimer: NodeJS.Timer;
 
@@ -108,6 +110,9 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             if (response.outdoorTemperatureStatus !== TemperatureSensorStatus.NoError)
                 return;
 
+            if (this.automatedOutdoorSensors.indexOf(responseClient.mac) === -1)
+                this.setOutdoorTemperature(response, responseClient);
+
             this.automatedOutdoorSensors
                 .filter(mac => mac !== responseClient.mac)
                 .forEach(mac => {
@@ -120,6 +125,43 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         }
     }
 
+    async getOrAddOutdoorSensor(responseClient: AprilaireClient): Promise<AprilaireOutdoorThermometer> {
+        if (this.outdoorSensors.has(responseClient.mac))
+            return this.outdoorSensors.get(responseClient.mac);
+
+        const d: Device = {
+            providerNativeId: this.nativeId,
+            name: responseClient.name + " Outdoor Temperature Sensor",
+            type: ScryptedDeviceType.Sensor,
+            nativeId: responseClient.mac + "|OutdoorTemperatureSensor",
+            interfaces: [
+                ScryptedInterface.Thermometer
+            ],
+            info: {
+                model: responseClient.model,
+                manufacturer: "Aprilaire",
+                serialNumber: responseClient.mac,
+                firmware: responseClient.firmware,
+                version: responseClient.hardware
+            }
+        }
+        
+        await deviceManager.onDeviceDiscovered(d);
+        
+        const o = new AprilaireOutdoorThermometer(d.nativeId);
+        this.outdoorSensors.set(responseClient.mac, o);
+
+        return o;
+    }
+
+    async setOutdoorTemperature(response: ControllingSensorsStatusAndValueResponse, responseClient: AprilaireClient) : Promise<void> {
+        if (response.outdoorTemperatureStatus === TemperatureSensorStatus.NoError && response.outdoorTemperature !== undefined) {
+            const outdoorSensor = await this.getOrAddOutdoorSensor(responseClient);
+            outdoorSensor.temperature = response.outdoorTemperature;
+            outdoorSensor.setTemperatureUnit(TemperatureUnit.C);
+        }
+    }
+
     getSettings(): Promise<Setting[]> {
         return this.storageSettings.getSettings();
     }
@@ -127,9 +169,14 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         return this.storageSettings.putSetting(key, value);
     }
 
-    async getDevice(nativeId: string): Promise<AprilaireThermostat> {
+    async getDevice(nativeId: string): Promise<any> {
         if (this.thermostats.has(nativeId))
             return this.thermostats.get(nativeId);
+
+        if (nativeId.endsWith("|OutdoorTemperatureSensor")) {
+            const o = new AprilaireOutdoorThermometer(nativeId);
+            return o;
+        }
 
         let s = deviceManager.getDeviceStorage(nativeId);
         if (s) {
