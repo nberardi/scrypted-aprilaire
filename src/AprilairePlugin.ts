@@ -6,10 +6,11 @@ import { BasePayloadResponse } from "./BasePayloadResponse";
 import { AprilaireThermostat } from './AprilaireThermostat';
 import { ControllingSensorsStatusAndValueRequest, ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, WrittenOutdoorTemperatureValueRequest } from './FunctionalDomainSensors';
 import { ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
-import { HoldType, ScheduleHoldRequest, ScheduleHoldResponse } from './FunctionalDomainScheduling';
+import { HeatBlastResponse, HoldType, ScheduleHoldRequest, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 import { SyncRequest } from './FunctionalDomainStatus';
 import { setInterval } from 'node:timers';
 import { AprilaireOutdoorThermometer } from './AprilaireOutdoorThermometer';
+import { AprilaireHeatBlastSwitch } from './AprilaireHeatBlastSwitch';
 
 const { deviceManager, systemManager } = sdk;
 
@@ -42,6 +43,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     clients = new Map<string, AprilaireClient>();
     thermostats = new Map<string, AprilaireThermostat>();
     outdoorSensors = new Map<string, AprilaireOutdoorThermometer>();
+    heatBlastSwitch = new Map<string, AprilaireHeatBlastSwitch>()
     automatedOutdoorSensors: string[] = [];
     automatedOutdoorSensorsTimer: NodeJS.Timer;
 
@@ -125,6 +127,9 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         }
     }
 
+    async setHeatBlash(response: HeatBlastResponse, responseClient: AprilaireClient) : Promise<void> { 
+    }
+
     async getOrAddOutdoorSensor(responseClient: AprilaireClient): Promise<AprilaireOutdoorThermometer> {
         if (this.outdoorSensors.has(responseClient.mac))
             return this.outdoorSensors.get(responseClient.mac);
@@ -191,6 +196,9 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     }
 
     private connectThermostat(host: string, port: number) : Promise<any> {
+        if (host === undefined || isNaN(port))
+            return Promise.reject("host and port are required");
+
         const client = new AprilaireClient(host, port);
         const self = this;
 

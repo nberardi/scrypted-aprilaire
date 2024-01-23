@@ -2,6 +2,24 @@ import { FunctionalDomain, FunctionalDomainSetup } from "./AprilaireClient";
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 
+/*
+*
+* Functional Domain: Set-up
+* Byte: 0x01
+*
+* Attribute                             |   Byte    |   COS |   R/W |   Implimented
+* --------------------------------------|-----------|-------|-------|---------------
+* Thermostate Installer Settings        |   0x01    |   Yes |   R   |   X
+* Contractor Information                |   0x02    |   Yes |   R/W |   
+* Scale                                 |   0x03    |   No  |   R/W |   X
+* Date and Time                         |   0x04    |   No  |   R/W |   
+* Air Cleaning Installer Settings       |   0x05    |   Yes |   R   |   
+* Humidity Control Installer Settings   |   0x06    |   Yes |   R   |   
+* Fresh Air Installer Settings          |   0x07    |   Yes |   R   |   
+* Reset/Power cycle                     |   0x08    |   No  |   W   |   
+*
+*/
+
 export class ScaleRequest extends BasePayloadRequest {
     scale: TemperatureScale;
     constructor() {

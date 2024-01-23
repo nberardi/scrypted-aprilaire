@@ -1,6 +1,19 @@
 import { FunctionalDomain, FunctionalDomainIdentification } from "./AprilaireClient";
 import { BasePayloadResponse } from "./BasePayloadResponse";
 
+/*
+*
+* Functional Domain: Identification
+* Byte: 0x08
+*
+* Attribute                 |   Byte    |   COS |   R/W |   Implimented
+* --------------------------|-----------|-------|-------|---------------
+* Revision & Model          |   0x01    |   Yes |   R   |   X
+* MAC Address               |   0x02    |   No  |   R   |   X
+* Thermostat Name           |   0x03    |   No  |   R/W |   X
+*
+*/
+
 export class ThermostatNameResponse extends BasePayloadResponse {
     postalCode: string;
     name: string;

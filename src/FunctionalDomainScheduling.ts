@@ -3,6 +3,21 @@ import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { FanModeSetting } from "./FunctionalDomainControl";
 
+/*
+*
+* Functional Domain: Scheduling
+* Byte: 0x03
+*
+* Attribute                                 |   Byte    |   COS |   R/W |   Implimented
+* ------------------------------------------|-----------|-------|-------|---------------
+* Schedule Settings                         |   0x01    |   Yes |   R/W |   
+* Away Settings                             |   0x02    |   Yes |   R/W |   X
+* Schedule Day                              |   0x03    |   Yes |   R/W |   
+* Schedule Hold                             |   0x04    |   Yes |   R/W |   X
+* Heat Blast                                |   0x05    |   Yes |   R/W |   X
+*
+*/
+
 export class ScheduleHoldRequest extends BasePayloadRequest {
     hold: HoldType = HoldType.Disabled;
     fan: FanModeSetting;
@@ -87,8 +102,6 @@ export class HeatBlastResponse extends BasePayloadResponse {
         this.heatBlast = Boolean(payload.readUint8(0));
     }
 }
-
-
 
 export class AwaySettingsResponse extends BasePayloadResponse {
     fan: FanModeSetting;

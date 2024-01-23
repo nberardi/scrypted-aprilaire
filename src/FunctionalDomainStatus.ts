@@ -2,6 +2,22 @@ import { FunctionalDomain, FunctionalDomainStatus } from "./AprilaireClient";
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 
+/*
+*
+* Functional Domain: Status
+* Byte: 0x07
+*
+* Attribute                 |   Byte    |   COS |   R/W |   Implimented
+* --------------------------|-----------|-------|-------|---------------
+* COS                       |   0x01    |   No  |   R/W |   X
+* Sync                      |   0x02    |   No  |   W   |   X
+* Off line                  |   0x03    |   Yes |   NA  |   
+* Thermostat Status         |   0x04    |   Yes |   R   |   X
+* IAQ Status                |   0x05    |   Yes |   R   |   X
+* Thermostat Error          |   0x06    |   Yes |   R   |   X
+*
+*/
+
 export class CosRequest extends BasePayloadRequest {
     constructor() {
         super(FunctionalDomain.Status, FunctionalDomainStatus.COS);
@@ -26,7 +42,7 @@ export class CosRequest extends BasePayloadRequest {
             1,  // Schedule Hold
             1,  // Heat Blast
             1,  // Service Reminders Status
-            0,  // Alerts Status
+            1,  // Alerts Status
             0,  // Alerts Settings
             1,  // Backlight Settings
             1,  // Thermostat Location & Name

@@ -1,14 +1,15 @@
-import { HumiditySettingStatus, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode, Fan, FanState, FanMode, FanStatus, Refresh, TemperatureCommand } from '@scrypted/sdk';
+import { HumiditySettingStatus, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode, Fan, FanState, FanMode, FanStatus, Refresh, TemperatureCommand, FilterMaintenance } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
 import { ThermostatSetpointAndModeSettingsRequest, FanModeSetting, DehumidificationSetpointRequest, HumidificationSetpointRequest, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, HumidificationSetpointResponse, DehumidificationSetpointResponse, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode } from './FunctionalDomainControl';
-import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus, ControllingSensorsStatusAndValueRequest } from './FunctionalDomainSensors';
+import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus, ControllingSensorsStatusAndValueRequest, SensorValuesResponse } from './FunctionalDomainSensors';
 import { ScaleRequest, TemperatureScale, ScaleResponse, ThermostatInstallerSettingsResponse } from './FunctionalDomainSetup';
 import { ThermostatStatusResponse, HeatingStatus, CoolingStatus, IAQStatusResponse, HumidificationStatus, DehumidificationStatus, SyncRequest, VentilationStatus, AirCleaningStatus, OfflineResponse, ThermostatStatusRequest } from './FunctionalDomainStatus';
 import { HeatBlastRequest, HeatBlastResponse, HoldType, ScheduleHoldResponse } from './FunctionalDomainScheduling';
+import { ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
 
-export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, Online, Settings, Refresh, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySetting, HumiditySensor, Fan {
+export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, Online, Settings, Refresh, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySetting, HumiditySensor, Fan, FilterMaintenance {
 
     readonly deviceOn = "On";
     readonly deviceOff = "Off";
@@ -385,11 +386,18 @@ export class AprilaireThermostat extends ScryptedDeviceBase implements OnOff, On
             this.storageSettings.values.hold = this._holdState;
         }
 
+        else if (response instanceof ServiceRemindersStatusResponse) {
+            this.filterChangeIndication = response.airFilter;
+            this.filterLifeLevel = response.airFilterPercent;
+
+            this.console.info("filter life: " + this.filterLifeLevel + "%, needs changing: " + this.filterChangeIndication);
+        }
+
         else if (response instanceof ThermostatInstallerSettingsResponse) {
             this.temperatureUnit = response.scale === TemperatureScale.F ? TemperatureUnit.F : TemperatureUnit.C;
         }
 
-        else if (response instanceof ControllingSensorsStatusAndValueResponse) {
+        else if (response instanceof ControllingSensorsStatusAndValueResponse || response instanceof SensorValuesResponse) {
             try {
                 this.console.group("Controlling Sensors Status And Value");
 

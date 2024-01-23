@@ -6,12 +6,13 @@ import net from 'node:net';
 import { EventEmitter } from "events";
 import { ThermostatAndIAQAvailableResponse, FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse, ThermostatSetpointAndModeSettingsResponse } from "./FunctionalDomainControl";
 import { MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse } from "./FunctionalDomainIdentification";
-import { ControllingSensorsStatusAndValueResponse, WrittenOutdoorTemperatureValueResponse } from "./FunctionalDomainSensors";
+import { ControllingSensorsStatusAndValueResponse, SensorValuesResponse, WrittenOutdoorTemperatureValueResponse } from "./FunctionalDomainSensors";
 import { ThermostatInstallerSettingsResponse, ScaleResponse } from "./FunctionalDomainSetup";
 import { CosRequest, IAQStatusResponse, ThermostatStatusResponse, SyncResponse, ThermostatErrorResponse, OfflineResponse } from "./FunctionalDomainStatus";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { AwaySettingsResponse, HeatBlastResponse, ScheduleHoldResponse } from "./FunctionalDomainScheduling";
+import { AlertsStatusResponse, ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
 
 export class AprilaireClient extends EventEmitter {
     private client: AprilaireSocket;
@@ -145,6 +146,12 @@ export enum FunctionalDomainIdentification {
     RevisionAndModel = 1,
     MacAddress = 2,
     ThermostatName = 4
+}
+
+export enum FunctionalDomainAlerts {
+    ServiceRemindersStatus = 1,
+    AlertsStatus = 2,
+    AlertsSettings = 3
 }
 
 export enum FunctionalDomainScheduling {
@@ -535,7 +542,6 @@ export class AprilaireResponsePayload {
         }
 
         if (this.action === Action.NAck) {
-            console.error(this.format(`received error, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`));
             throw Error(`[${this.host}:${this.port}] received error, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`);
         }
 
@@ -566,6 +572,14 @@ export class AprilaireResponsePayload {
                         return new HeatBlastResponse(this.payload);
                     case FunctionalDomainScheduling.AwaySettings:
                         return new AwaySettingsResponse(this.payload);
+                }
+                break;
+            case FunctionalDomain.Alerts:
+                switch(this.attribute) {
+                    case FunctionalDomainAlerts.ServiceRemindersStatus:
+                        return new ServiceRemindersStatusResponse(this.payload);
+                    case FunctionalDomainAlerts.AlertsStatus: 
+                        return new AlertsStatusResponse(this.payload);
                 }
                 break;
             case FunctionalDomain.Control:
@@ -600,6 +614,8 @@ export class AprilaireResponsePayload {
                 break;
             case FunctionalDomain.Sensors:
                 switch(this.attribute) {
+                    case FunctionalDomainSensors.SensorValues:
+                        return new SensorValuesResponse(this.payload);
                     case FunctionalDomainSensors.ControllingSensorValues:
                         return new ControllingSensorsStatusAndValueResponse(this.payload);
                     case FunctionalDomainSensors.WrittenOutdoorTemperatureValue:
@@ -656,10 +672,15 @@ class AprilaireSocket extends EventEmitter {
             try {
                 console.group(self.format(`received data, data=${data.toString("base64")}`));
                 self.parseResponse(data).forEach(element => {
-                    const payload = element.toObject();
+                    try {
+                        const payload = element.toObject();
 
-                    if (payload)
-                        self.emit('response', payload);
+                        if (payload)
+                            self.emit('response', payload);
+                    }
+                    catch (err) {
+                        console.error(err.message);
+                    }
                 });
             } finally {
                 console.groupEnd();

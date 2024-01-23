@@ -2,6 +2,23 @@ import { FunctionalDomain, FunctionalDomainControl, convertByteToTemperature, co
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 
+/*
+*
+* Functional Domain: Control
+* Byte: 0x02
+*
+* Attribute                                 |   Byte    |   COS |   R/W |   Implimented
+* ------------------------------------------|-----------|-------|-------|---------------
+* Thermostate Setpoint and Mode Settings    |   0x01    |   Yes |   R/W |   X
+* Increment Setpoint                        |   0x02    |   No  |   W   |   
+* Dehumidiification Setpoint                |   0x03    |   Yes |   R/W |   X
+* Humidification Setpoint                   |   0x04    |   Yes |   R/W |   X
+* Fresh Air Setting                         |   0x05    |   Yes |   R/W |   X
+* Air Cleaning Setting                      |   0x06    |   Yes |   R/W |   X
+* Thermostat & IAQ Available                |   0x07    |   Yes |   R   |   X
+*
+*/
+
 export class ThermostatSetpointAndModeSettingsResponse extends BasePayloadResponse {
     mode: ThermostatMode;
     fan: FanModeSetting;

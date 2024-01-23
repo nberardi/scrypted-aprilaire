@@ -2,6 +2,59 @@ import { FunctionalDomain, convertByteToTemperature, convertTemperatureToByte, F
 import { BasePayloadResponse, ResponseErrorType } from "./BasePayloadResponse";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 
+/*
+*
+* Functional Domain: Sensors Values
+* Byte: 0x05
+*
+* Attribute                                 |   Byte    |   COS |   R/W |   Implimented
+* ------------------------------------------|-----------|-------|-------|---------------
+* Sensor Values                             |   0x01    |   No  |   R   |   X
+* Controlling Sensor Values                 |   0x02    |   Yes |   R   |   X
+* Support Modules                           |   0x03    |   Yes |   R   |   
+* Written Outdoor Temperature Value         |   0x04    |   Yes |   R/W |   X
+*
+*/
+
+export class SensorValuesResponse extends BasePayloadResponse {
+    indoorTemperatureStatus: TemperatureSensorStatus;
+    indoorTemperature: number;
+    indoorWiredRemoteTemperatureStatus: TemperatureSensorStatus;
+    indoorWiredRemoteTemperature: number;
+    outdoorTemperatureStatus: TemperatureSensorStatus;
+    outdoorTemperature: number;
+    indoorHumidityStatus: HumiditySensorStatus;
+    indoorHumidity: number;
+    returningAirTemperatureStatus: TemperatureSensorStatus;
+    returningAirTemperature: number;
+    leavingAirTemperatureStatus: TemperatureSensorStatus;
+    leavingAirTemperature: number;
+    outdoorWirelessTemperatureStatus: TemperatureSensorStatus;
+    outdoorWirelessTemperature: number;
+    outdoorHumidityStatus: HumiditySensorStatus; // from wireless
+    outdoorHumidity: number; // from wireless
+    constructor(payload: Buffer) {
+        super(payload, FunctionalDomain.Sensors, FunctionalDomainSensors.SensorValues);
+
+        this.indoorTemperatureStatus = payload.readUint8(0);
+        this.indoorTemperature = convertByteToTemperature(payload.readUint8(1));
+        this.indoorWiredRemoteTemperatureStatus = payload.readUint8(2);
+        this.indoorWiredRemoteTemperature = convertByteToTemperature(payload.readUint8(3));
+        this.outdoorTemperatureStatus = payload.readUint8(4);
+        this.outdoorTemperature = convertByteToTemperature(payload.readUint8(5));
+        this.indoorHumidityStatus = payload.readUint8(6);
+        this.indoorHumidity = payload.readUint8(7);
+        this.returningAirTemperatureStatus = payload.readUint8(8);
+        this.returningAirTemperature = convertByteToTemperature(payload.readUint8(9));
+        this.leavingAirTemperatureStatus = payload.readUint8(10);
+        this.leavingAirTemperature = convertByteToTemperature(payload.readUint8(11));
+        this.outdoorWirelessTemperatureStatus = payload.readUint8(12);
+        this.outdoorWirelessTemperature = convertByteToTemperature(payload.readUint8(13));
+        this.outdoorHumidityStatus = payload.readUint8(14);
+        this.outdoorHumidity = payload.readUint8(15);
+    }
+}
+
 export class WrittenOutdoorTemperatureValueRequest extends BasePayloadRequest {
     temperature: number = 0;
     constructor() {
