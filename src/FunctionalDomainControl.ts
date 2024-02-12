@@ -130,7 +130,7 @@ export class ThermostatAndIAQAvailableResponse extends BasePayloadResponse {
     airCleaning: boolean;
     freshAirVentilation: boolean;
     dehumidification: boolean;
-    humidification: boolean;
+    humidification: HumidificationState;
 
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
@@ -139,8 +139,14 @@ export class ThermostatAndIAQAvailableResponse extends BasePayloadResponse {
         this.airCleaning = Boolean(payload.readUint8(1));
         this.freshAirVentilation = Boolean(payload.readUint8(2));
         this.dehumidification = Boolean(payload.readUint8(3));
-        this.humidification = Boolean(payload.readUint8(4));
+        this.humidification = payload.readUint8(4);
     }
+}
+
+export enum HumidificationState {
+    NotAvailable = 0,
+    Auto = 1,
+    Manual = 2
 }
 
 export enum ThermostatCapabilities {
