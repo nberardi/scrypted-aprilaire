@@ -3,14 +3,16 @@ import { DeviceProvider, ScryptedDeviceBase, Setting, Settings } from '@scrypted
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse } from "./BasePayloadResponse";
-import { AprilaireThermostat } from './AprilaireThermostat';
 import { ControllingSensorsStatusAndValueRequest, ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, WrittenOutdoorTemperatureValueRequest } from './FunctionalDomainSensors';
 import { ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
 import { HeatBlastResponse, HoldType, ScheduleHoldRequest, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 import { SyncRequest } from './FunctionalDomainStatus';
 import { setInterval } from 'node:timers';
 import { AprilaireOutdoorThermometer } from './AprilaireOutdoorThermometer';
-import { AprilaireHeatBlastSwitch } from './AprilaireHeatBlastSwitch';
+import { AprilaireThermostatBase } from './AprilaireThermostatBase';
+import { AprilaireThermostat } from './AprilaireThermostat';
+import { AprilaireDehumidifier } from './AprilaireDehumidifier';
+import { AprilaireHumidifier } from './AprilaireHumidifier';
 
 const { deviceManager, systemManager } = sdk;
 
@@ -41,9 +43,8 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     });
 
     clients = new Map<string, AprilaireClient>();
-    thermostats = new Map<string, AprilaireThermostat>();
+    thermostats = new Map<string, AprilaireThermostatBase>();
     outdoorSensors = new Map<string, AprilaireOutdoorThermometer>();
-    heatBlastSwitch = new Map<string, AprilaireHeatBlastSwitch>()
     automatedOutdoorSensors: string[] = [];
     automatedOutdoorSensorsTimer: NodeJS.Timer;
 
@@ -125,9 +126,6 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                     client.write(request);
             });
         }
-    }
-
-    async setHeatBlash(response: HeatBlastResponse, responseClient: AprilaireClient) : Promise<void> { 
     }
 
     async getOrAddOutdoorSensor(responseClient: AprilaireClient): Promise<AprilaireOutdoorThermometer> {
@@ -214,14 +212,15 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                     type: ScryptedDeviceType.Thermostat,
                     nativeId: client.mac,
                     interfaces: [
-                        ScryptedInterface.TemperatureSetting,
-                        ScryptedInterface.Thermometer,
-                        ScryptedInterface.HumiditySensor,
-                        ScryptedInterface.Fan,
                         ScryptedInterface.OnOff,
                         ScryptedInterface.Online,
+                        ScryptedInterface.Refresh,
                         ScryptedInterface.Settings,
-                        ScryptedInterface.Refresh
+                        ScryptedInterface.TemperatureSetting,
+                        ScryptedInterface.Fan,
+                        ScryptedInterface.Thermometer,
+                        ScryptedInterface.HumiditySensor,
+                        ScryptedInterface.FilterMaintenance,
                     ],
                     info: {
                         model: client.model,
@@ -232,25 +231,59 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                     }
                 };
 
-                if (client.system.humidification || client.system.dehumidification)
-                    d.interfaces.push(ScryptedInterface.HumiditySetting);
-
                 await deviceManager.onDeviceDiscovered(d);
+
+                self.clients.set(d.nativeId, client);
+
+                const t = new AprilaireThermostat(d.nativeId, client);
+                self.thermostats.set(d.nativeId, t);
+
+                if (client.system.humidification) {
+                    const dh = { ...d };
+                    dh.interfaces = [
+                        ScryptedInterface.OnOff,
+                        ScryptedInterface.Online,
+                        ScryptedInterface.Refresh,
+                        ScryptedInterface.HumiditySetting,
+                        ScryptedInterface.HumiditySensor,
+                        ScryptedInterface.FilterMaintenance,
+                        ScryptedInterface.Fan
+                    ];
+                    dh.nativeId = client.mac + "-humidifier";
+                    dh.name = client.name + " Humidifier";
+                    dh.type = ScryptedDeviceType.Fan;
+
+                    await deviceManager.onDeviceDiscovered(dh);
+                    self.thermostats.set(dh.nativeId, new AprilaireHumidifier(dh.nativeId, client));
+                } 
+                
+                if (client.system.dehumidification) {
+                    const dh = { ...d };
+                    dh.interfaces = [
+                        ScryptedInterface.OnOff,
+                        ScryptedInterface.Online,
+                        ScryptedInterface.Refresh,
+                        ScryptedInterface.HumiditySetting,
+                        ScryptedInterface.HumiditySensor,
+                        ScryptedInterface.FilterMaintenance,
+                        ScryptedInterface.Fan
+                    ];
+                    dh.nativeId = client.mac + "-dehumidifier";
+                    dh.name = client.name + " Dehumidifier";
+                    dh.type = ScryptedDeviceType.Fan;
+
+                    await deviceManager.onDeviceDiscovered(dh);
+                    self.thermostats.set(dh.nativeId, new AprilaireDehumidifier(dh.nativeId, client));
+                }
 
                 const s = deviceManager.getDeviceStorage(d.nativeId);
                 s.setItem("host", host);
                 s.setItem("port", port.toString());
 
-                const t = new AprilaireThermostat(d.nativeId, client);
-                t.sync();
-
-                self.clients.set(d.nativeId, client);
-                self.thermostats.set(d.nativeId, t);
-
                 // send a sync request to get a refresh of the current state
                 client.write(new SyncRequest());
 
-                resolve({nativeId: d.nativeId, device: d, thermostat: t });
+                resolve({nativeId: d.nativeId, device: d, thermostat: t});
             });
         });
     }
