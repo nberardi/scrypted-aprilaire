@@ -112,6 +112,8 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
 
         let { mode, setpoint } = command;
 
+        var settings = { ...this.temperatureSetting };
+
         if (mode) {
             switch (mode) {
                 case ThermostatMode.On:
@@ -133,11 +135,13 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
                     request.mode = TMode.Off;
                     break;
             }
+
+            settings.mode = mode;
         }
 
         if (setpoint) {
             if (typeof setpoint === 'number') {
-                switch (mode ?? this.thermostatMode) {
+                switch (mode ?? settings.mode) {
                     case ThermostatMode.Heat:
                         request.heatSetpoint = setpoint;
                         break;
@@ -151,9 +155,13 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
             }
             else {
                 request.coolSetpoint = Math.max(setpoint[0], setpoint[1]);
-                request.heatSetpoint = Math.min(setpoint[0], setpoint[1]);
+                request.heatSetpoint = Math.min(setpoint[0], setpoint[1]);                
             }
+
+            settings.setpoint = setpoint;
         }
+
+        this.temperatureSetting = settings;
 
         this.client.write(request);
     }
@@ -166,6 +174,8 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
 
     async setThermostatMode(mode: ThermostatMode): Promise<void> {
         let request = new ThermostatSetpointAndModeSettingsRequest();
+
+        var settings = { ...this.temperatureSetting };
 
         switch (mode) {
             case ThermostatMode.On:
@@ -188,13 +198,16 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
                 break;
         }
 
+        settings.mode = mode;
+        this.temperatureSetting = settings;
+
         this.client.write(request);
     }
 
     async setThermostatSetpoint(degrees: number): Promise<void> {
         let request = new ThermostatSetpointAndModeSettingsRequest();
 
-        switch (this.thermostatMode) {
+        switch (this.temperatureSetting.mode) {
             case ThermostatMode.Heat:
                 request.heatSetpoint = degrees;
                 break;
@@ -234,6 +247,8 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
     processResponse(response: BasePayloadResponse) {
         let fan: FanStatus = JSON.parse(JSON.stringify(this.fan));
 
+        var settings = { ...this.temperatureSetting };
+
         if (response instanceof ScaleResponse) {
             this.temperatureUnit = response.scale === TemperatureScale.F ? TemperatureUnit.F : TemperatureUnit.C;
         }
@@ -264,12 +279,11 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
             const cooling = response.cooling !== CoolingStatus.NotActive && response.cooling !== CoolingStatus.EquipmentWait;
 
             if (heating)
-                this.thermostatActiveMode = ThermostatMode.Heat;
+                settings.activeMode = ThermostatMode.Heat;
             else if (cooling)
-                this.thermostatActiveMode = ThermostatMode.Cool;
-
+                settings.activeMode = ThermostatMode.Cool;
             else
-                this.thermostatActiveMode = ThermostatMode.Off;
+            settings.activeMode = ThermostatMode.Off;
 
             fan.speed = response.fan;
         }
@@ -277,71 +291,71 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         else if (response instanceof ThermostatAndIAQAvailableResponse) {
             switch (response.thermostat) {
                 case ThermostatCapabilities.Cool:
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Cool];
+                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Cool];
                     break;
                 case ThermostatCapabilities.Heat:
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat];
+                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat];
                     break;
                 case ThermostatCapabilities.HeatAndCool:
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
+                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
                     break;
                 case ThermostatCapabilities.HeatCoolAndAuto:
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
+                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
                     break;
                 case ThermostatCapabilities.HeatEmergencyHeatAndCool:
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
+                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
                     break;
                 case ThermostatCapabilities.HeatEmergencyHeatCoolAndAuto:
-                    this.thermostatAvailableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
+                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
                     break;
             }
 
-            this.console.info("thermostat modes: " + this.thermostatAvailableModes);
+            this.console.info("thermostat modes: " + settings.availableModes);
         }
 
         else if (response instanceof ThermostatSetpointAndModeSettingsResponse) {
             switch (response.mode) {
                 case TMode.Auto:
                     this.on = true;
-                    this.thermostatMode = ThermostatMode.Auto;
+                    settings.mode = ThermostatMode.Auto;
                     break;
                 case TMode.Cool:
                     this.on = true;
-                    this.thermostatMode = ThermostatMode.Cool;
+                    settings.mode = ThermostatMode.Cool;
                     break;
                 case TMode.Heat:
                 case TMode.EmergencyHeat:
                     this.on = true;
-                    this.thermostatMode = ThermostatMode.Heat;
+                    settings.mode = ThermostatMode.Heat;
                     break;
                 case TMode.Off:
                     this.on = false;
-                    this.thermostatMode = ThermostatMode.FanOnly;
+                    settings.mode = ThermostatMode.FanOnly;
                     break;
             }
 
-            switch (this.thermostatMode) {
+            switch (settings.mode) {
                 case ThermostatMode.Heat:
-                    this.thermostatSetpoint = response.heatSetpoint;
+                    settings.setpoint = response.heatSetpoint;
                     break;
                 case ThermostatMode.Cool:
-                    this.thermostatSetpoint = response.coolSetpoint;
+                    settings.setpoint = response.coolSetpoint;
                     break;
                 default:
-                    this.thermostatSetpoint = response.heatSetpoint;
+                    settings.setpoint = [Math.min(response.coolSetpoint, response.heatSetpoint), Math.max(response.coolSetpoint, response.heatSetpoint)];
                     break;
             }
 
-            this.thermostatSetpointLow = Math.max(response.coolSetpoint, response.heatSetpoint);
-            this.thermostatSetpointHigh = Math.max(response.coolSetpoint, response.heatSetpoint);
-
             fan.mode = response.fan === FanModeSetting.Auto ? FanMode.Auto : FanMode.Manual;
+
+            this.console.info("thermostat mode: " + settings.mode + ", setpoint: " + settings.setpoint);
         }
 
-        if (!this.thermostatActiveMode)
-            this.thermostatActiveMode = this.thermostatMode;
+        if (!settings.activeMode)
+            settings.activeMode = settings.mode;
 
         this.fan = fan;
+        this.temperatureSetting = settings;
 
         super.processResponse(response);
     }

@@ -1,4 +1,4 @@
-import { HumidityMode, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, FanMode, Refresh } from '@scrypted/sdk';
+import { HumidityMode, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, FanMode, Refresh, ThermostatMode } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
@@ -24,12 +24,20 @@ export class AprilaireThermostatBase extends ScryptedDeviceBase implements Onlin
             availableModes: [HumidityMode.Off]
         };
 
+        this.temperatureSetting = {
+            mode: ThermostatMode.Off,
+            activeMode: ThermostatMode.Off,
+            availableModes: [ThermostatMode.Off],
+            setpoint: 0,
+        };
+
         this.fan = {
             speed: 0,
             availableModes: [FanMode.Auto, FanMode.Manual]
         };
 
-        this.client = client;
+        // ensure that the modes are properly configured
+        this.processResponse(client.system);
         this.client.on("response", this.processResponse.bind(this));
     }
 

@@ -9,7 +9,6 @@ import { HeatBlastResponse, HoldType, ScheduleHoldRequest, ScheduleHoldResponse 
 import { SyncRequest } from './FunctionalDomainStatus';
 import { setInterval } from 'node:timers';
 import { AprilaireOutdoorThermometer } from './AprilaireOutdoorThermometer';
-import { AprilaireThermostatBase } from './AprilaireThermostatBase';
 import { AprilaireThermostat } from './AprilaireThermostat';
 import { AprilaireDehumidifier } from './AprilaireDehumidifier';
 import { AprilaireHumidifier } from './AprilaireHumidifier';
@@ -43,7 +42,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     });
 
     clients = new Map<string, AprilaireClient>();
-    thermostats = new Map<string, AprilaireThermostatBase>();
+    thermostats = new Map<string, AprilaireThermostat | AprilaireHumidifier | AprilaireDehumidifier>();
     outdoorSensors = new Map<string, AprilaireOutdoorThermometer>();
     automatedOutdoorSensors: string[] = [];
     automatedOutdoorSensorsTimer: NodeJS.Timer;
@@ -73,8 +72,8 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         if (this.storageSettings.values.syncOutdoorSensor === false)
             return;
 
-        this.clients.forEach((client, mac) => {
-            if (this.automatedOutdoorSensors.indexOf(mac) >= 0)
+        this.clients.forEach((client) => {
+            if (this.automatedOutdoorSensors.indexOf(client.mac) >= 0)
                 return;
 
             let request = new ControllingSensorsStatusAndValueRequest();
@@ -100,8 +99,8 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 request.endDate = response.endDate;
                 
                 // write teh hold to the other thermostats
-                this.clients.forEach((client, mac) => {
-                    if (mac === responseClient.mac)
+                this.clients.forEach((client) => {
+                    if (client.mac === responseClient.mac)
                         return;
 
                     client.write(request);
@@ -186,8 +185,10 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             const host = s.getItem("host");
             const port = Number(s.getItem("port"));
 
-            const { nativeId, device, thermostat } = await this.connectThermostat(host, port);
-            return thermostat;
+            await this.connectThermostat(host, port);
+
+            if (this.thermostats.has(nativeId))
+                return this.thermostats.get(nativeId);
         }
 
         return undefined;
@@ -205,6 +206,8 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         return new Promise<any>((resolve) => {
             client.connect();
             client.once("ready", async () => {
+
+                const devices: Device[] = [];
 
                 const d: Device = {
                     providerNativeId: self.nativeId,
@@ -232,10 +235,14 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 };
 
                 await deviceManager.onDeviceDiscovered(d);
+                devices.push(d);
 
                 self.clients.set(d.nativeId, client);
 
                 const t = new AprilaireThermostat(d.nativeId, client);
+                let hum:AprilaireHumidifier;
+                let deHum:AprilaireDehumidifier;
+
                 self.thermostats.set(d.nativeId, t);
 
                 if (client.system.humidification) {
@@ -254,7 +261,10 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                     dh.type = ScryptedDeviceType.Fan;
 
                     await deviceManager.onDeviceDiscovered(dh);
-                    self.thermostats.set(dh.nativeId, new AprilaireHumidifier(dh.nativeId, client));
+                    devices.push(dh);
+
+                    hum = new AprilaireHumidifier(dh.nativeId, client);
+                    self.thermostats.set(dh.nativeId, hum);
                 } 
                 
                 if (client.system.dehumidification) {
@@ -273,7 +283,10 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                     dh.type = ScryptedDeviceType.Fan;
 
                     await deviceManager.onDeviceDiscovered(dh);
-                    self.thermostats.set(dh.nativeId, new AprilaireDehumidifier(dh.nativeId, client));
+                    devices.push(dh);
+
+                    deHum = new AprilaireDehumidifier(dh.nativeId, client);
+                    self.thermostats.set(dh.nativeId, deHum);
                 }
 
                 const s = deviceManager.getDeviceStorage(d.nativeId);
@@ -283,7 +296,13 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 // send a sync request to get a refresh of the current state
                 client.write(new SyncRequest());
 
-                resolve({nativeId: d.nativeId, device: d, thermostat: t});
+                // not needed unless we are refreshing the entire list of devices
+                //await deviceManager.onDevicesChanged({
+                //    providerNativeId: self.nativeId,
+                //    devices: devices
+                //})
+
+                resolve({nativeId: d.nativeId, device: d, thermostat: t, humidifier: hum, dehumidifier: deHum});
             });
         });
     }
@@ -292,7 +311,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         const host = settings.host.toString();
         const port = Number(settings.port);
 
-        const { nativeId, device, thermostat } = await this.connectThermostat(host, port);
+        const { nativeId } = await this.connectThermostat(host, port);
         return nativeId;
     }  
 
