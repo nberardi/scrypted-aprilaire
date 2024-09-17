@@ -2,7 +2,7 @@ import { Fan, FanState, FilterMaintenance, HumidityCommand, HumidityMode, Humidi
 import { AprilaireClient } from './AprilaireClient';
 import { AprilaireSystemType, AprilaireThermostatBase } from './AprilaireThermostatBase';
 import { HumidificationSetpointRequest, HumidificationSetpointResponse, ThermostatAndIAQAvailableResponse } from './FunctionalDomainControl';
-import { DehumidificationStatus, IAQStatusResponse } from './FunctionalDomainStatus';
+import { DehumidificationStatus, HumidificationStatus, IAQStatusResponse } from './FunctionalDomainStatus';
 import { BasePayloadResponse } from './BasePayloadResponse';
 import { ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
 
@@ -80,10 +80,10 @@ export class AprilaireHumidifier extends AprilaireThermostatBase implements OnOf
         }
 
         else if (response instanceof IAQStatusResponse) {
-            const dehumidification = response.dehumidification === DehumidificationStatus.WholeHomeActive || response.dehumidification === DehumidificationStatus.OvercoolingToDehumidify;
-
-            switch (response.dehumidification) {
-                case DehumidificationStatus.Off:
+            switch (response.humidification) {
+                case HumidificationStatus.Off:
+                case HumidificationStatus.NotActive:
+                case HumidificationStatus.EquipmentWait:
                     humiditySetting.activeMode = HumidityMode.Off;
                     break;
 

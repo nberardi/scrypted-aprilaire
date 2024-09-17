@@ -75,10 +75,10 @@ export class AprilaireDehumidifier extends AprilaireThermostatBase implements On
         }
 
         else if (response instanceof IAQStatusResponse) {
-            const dehumidification = response.dehumidification === DehumidificationStatus.WholeHomeActive || response.dehumidification === DehumidificationStatus.OvercoolingToDehumidify;
-
             switch (response.dehumidification) {
                 case DehumidificationStatus.Off:
+                case DehumidificationStatus.NotActive:
+                case DehumidificationStatus.EquipmentWait:
                     humiditySetting.activeMode = HumidityMode.Off;
                     break;
 

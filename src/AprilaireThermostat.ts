@@ -1,15 +1,15 @@
-import { Fan, FanMode, FanState, FanStatus, FilterMaintenance, HumiditySensor, OnOff, Setting, SettingValue, Settings, TemperatureCommand, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode } from '@scrypted/sdk';
+import { Fan, FanMode, FanState, FanStatus, FilterMaintenance, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Setting, SettingValue, Settings, TemperatureCommand, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
 import { AprilaireSystemType, AprilaireThermostatBase } from './AprilaireThermostatBase';
-import { FanModeSetting, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode} from './FunctionalDomainControl';
+import { DehumidificationSetpointResponse, FanModeSetting, HumidificationSetpointResponse, HumidificationState, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode} from './FunctionalDomainControl';
 import { ScaleRequest, ScaleResponse, TemperatureScale, ThermostatInstallerSettingsResponse } from './FunctionalDomainSetup';
 import { HeatBlastRequest, HeatBlastResponse, HoldType, ScheduleHoldResponse } from './FunctionalDomainScheduling';
-import { CoolingStatus, HeatingStatus, ThermostatStatusResponse } from './FunctionalDomainStatus';
+import { CoolingStatus, FanStatus as TFanStatus, HeatingStatus, ThermostatStatusResponse } from './FunctionalDomainStatus';
 import { BasePayloadResponse } from './BasePayloadResponse';
 import { ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
 import { StorageSettingsDevice, StorageSettings } from '@scrypted/sdk/storage-settings';
 
-export class AprilaireThermostat extends AprilaireThermostatBase implements OnOff, Settings, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySensor, FilterMaintenance, Fan {
+export class AprilaireThermostat extends AprilaireThermostatBase implements OnOff, Settings, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySensor, HumiditySetting, FilterMaintenance, Fan {
     private _heatBlastState: boolean;
     private _holdState: string;
 
@@ -53,11 +53,35 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
 
     constructor(nativeId: string, client: AprilaireClient) {
         super(nativeId, client, AprilaireSystemType.Thermostat);
+
+        this.fan = {
+            speed: 0,
+            active: false,
+            mode: FanMode.Auto,
+            availableModes: [FanMode.Auto, FanMode.Manual]
+        };
+
+        this.humiditySetting = {
+            dehumidifierSetpoint: 0,
+            humidifierSetpoint: 0,
+            mode: HumidityMode.Auto,
+            availableModes: [HumidityMode.Auto, HumidityMode.Off]
+        };
+    }
+
+    async setHumidity(humidity: HumidityCommand) {
+        this.console.error("setHumidity function should not have been called from the Thermostat object");
     }
 
     async setFan(fan: FanState): Promise<void> {
+        var setting = {...this.fan};
+        setting.mode = fan.mode === FanMode.Auto ? FanMode.Auto : FanMode.Manual;
+        setting.speed = fan.mode === FanMode.Auto ? 1 : 0;
+
         let request = new ThermostatSetpointAndModeSettingsRequest();
         request.fan = fan.mode === FanMode.Auto ? FanModeSetting.Auto : FanModeSetting.On;
+
+        this.fan = setting;
         this.client.write(request);
     }
 
@@ -247,15 +271,30 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
     processResponse(response: BasePayloadResponse) {
         let fan: FanStatus = JSON.parse(JSON.stringify(this.fan));
 
-        var settings = { ...this.temperatureSetting };
+        var tempSettings = { ...this.temperatureSetting };
+        var fanSettings = { ...this.fan };
+        var humiditySetting = { ...this.humiditySetting };
 
         if (response instanceof ScaleResponse) {
             this.temperatureUnit = response.scale === TemperatureScale.F ? TemperatureUnit.F : TemperatureUnit.C;
         }
 
+        else if (response instanceof DehumidificationSetpointResponse) {
+            humiditySetting.dehumidifierSetpoint = response.dehumidificationSetpoint;
+            humiditySetting.mode = response.on ? HumidityMode.Dehumidify : humiditySetting.mode;
+            humiditySetting.activeMode = response.on ? HumidityMode.Dehumidify : humiditySetting.activeMode;
+        }
+
+        else if (response instanceof HumidificationSetpointResponse) {
+            humiditySetting.humidifierSetpoint = response.humidificationSetpoint;
+            humiditySetting.mode = response.on ? HumidityMode.Humidify : humiditySetting.mode;
+            humiditySetting.activeMode = response.on ? HumidityMode.Humidify : humiditySetting.activeMode;
+        }
+
         else if (response instanceof ThermostatInstallerSettingsResponse) {
             this.temperatureUnit = response.scale === TemperatureScale.F ? TemperatureUnit.F : TemperatureUnit.C;
-        }
+        }eifjcbfjknulcvtdivcgtebthdvdculfdrfhnirnjvkn
+        
 
         else if (response instanceof HeatBlastResponse) {
             this._heatBlastState = this._heatBlastState ?? response.heatBlast;
@@ -279,83 +318,93 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
             const cooling = response.cooling !== CoolingStatus.NotActive && response.cooling !== CoolingStatus.EquipmentWait;
 
             if (heating)
-                settings.activeMode = ThermostatMode.Heat;
+                tempSettings.activeMode = ThermostatMode.Heat;
             else if (cooling)
-                settings.activeMode = ThermostatMode.Cool;
+                tempSettings.activeMode = ThermostatMode.Cool;
             else
-            settings.activeMode = ThermostatMode.Off;
+                tempSettings.activeMode = ThermostatMode.Off;
 
-            fan.speed = response.fan;
+            fanSettings.speed = response.fan;
+            fanSettings.active = response.fan === TFanStatus.Active;
+
+            this.console.info("status mode: " + tempSettings.activeMode + ", fan: " + response.fan);
         }
 
         else if (response instanceof ThermostatAndIAQAvailableResponse) {
             switch (response.thermostat) {
                 case ThermostatCapabilities.Cool:
-                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Cool];
+                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Cool];
                     break;
                 case ThermostatCapabilities.Heat:
-                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat];
+                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat];
                     break;
                 case ThermostatCapabilities.HeatAndCool:
-                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
+                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
                     break;
                 case ThermostatCapabilities.HeatCoolAndAuto:
-                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
+                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
                     break;
                 case ThermostatCapabilities.HeatEmergencyHeatAndCool:
-                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
+                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
                     break;
                 case ThermostatCapabilities.HeatEmergencyHeatCoolAndAuto:
-                    settings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
+                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
                     break;
             }
 
-            this.console.info("thermostat modes: " + settings.availableModes);
+            if (response.dehumidification)
+                humiditySetting.availableModes.push(HumidityMode.Dehumidify);
+
+            if (response.humidification !== HumidificationState.NotAvailable)
+                humiditySetting.availableModes.push(HumidityMode.Humidify);
+
+            this.console.info("thermostat modes: " + tempSettings.availableModes);
         }
 
         else if (response instanceof ThermostatSetpointAndModeSettingsResponse) {
             switch (response.mode) {
                 case TMode.Auto:
                     this.on = true;
-                    settings.mode = ThermostatMode.Auto;
+                    tempSettings.mode = ThermostatMode.Auto;
                     break;
                 case TMode.Cool:
                     this.on = true;
-                    settings.mode = ThermostatMode.Cool;
+                    tempSettings.mode = ThermostatMode.Cool;
                     break;
                 case TMode.Heat:
                 case TMode.EmergencyHeat:
                     this.on = true;
-                    settings.mode = ThermostatMode.Heat;
+                    tempSettings.mode = ThermostatMode.Heat;
                     break;
                 case TMode.Off:
                     this.on = false;
-                    settings.mode = ThermostatMode.FanOnly;
+                    tempSettings.mode = ThermostatMode.FanOnly;
                     break;
             }
 
-            switch (settings.mode) {
+            switch (tempSettings.mode) {
                 case ThermostatMode.Heat:
-                    settings.setpoint = response.heatSetpoint;
+                    tempSettings.setpoint = response.heatSetpoint;
                     break;
                 case ThermostatMode.Cool:
-                    settings.setpoint = response.coolSetpoint;
+                    tempSettings.setpoint = response.coolSetpoint;
                     break;
                 default:
-                    settings.setpoint = [Math.min(response.coolSetpoint, response.heatSetpoint), Math.max(response.coolSetpoint, response.heatSetpoint)];
+                    tempSettings.setpoint = [Math.min(response.coolSetpoint, response.heatSetpoint), Math.max(response.coolSetpoint, response.heatSetpoint)];
                     break;
             }
 
-            fan.mode = response.fan === FanModeSetting.Auto ? FanMode.Auto : FanMode.Manual;
+            fanSettings.mode = response.fan === FanModeSetting.Auto ? FanMode.Auto : FanMode.Manual;
 
-            this.console.info("thermostat mode: " + settings.mode + ", setpoint: " + settings.setpoint);
+            this.console.info("thermostat mode: " + tempSettings.mode + ", setpoint: " + tempSettings.setpoint);
         }
 
-        if (!settings.activeMode)
-            settings.activeMode = settings.mode;
+        if (!tempSettings.activeMode)
+            tempSettings.activeMode = tempSettings.mode;
 
-        this.fan = fan;
-        this.temperatureSetting = settings;
+        this.temperatureSetting = tempSettings;
+        this.fan = fanSettings;
+        this.humiditySetting = humiditySetting;
 
         super.processResponse(response);
     }

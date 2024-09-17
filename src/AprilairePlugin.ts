@@ -234,6 +234,11 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                     }
                 };
 
+                // add humidity setting if either a humidifier or dehumidifer is supported so that TargetRelativeHumidity can be published to HomeKit
+                if (client.system.humidification || client.system.dehumidification) {
+                    d.interfaces.push(ScryptedInterface.HumiditySetting);
+                }
+
                 await deviceManager.onDeviceDiscovered(d);
                 devices.push(d);
 
