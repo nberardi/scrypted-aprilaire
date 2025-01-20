@@ -293,8 +293,7 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
 
         else if (response instanceof ThermostatInstallerSettingsResponse) {
             this.temperatureUnit = response.scale === TemperatureScale.F ? TemperatureUnit.F : TemperatureUnit.C;
-        }eifjcbfjknulcvtdivcgtebthdvdculfdrfhnirnjvkn
-        
+        }
 
         else if (response instanceof HeatBlastResponse) {
             this._heatBlastState = this._heatBlastState ?? response.heatBlast;

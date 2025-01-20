@@ -42,7 +42,7 @@ export class ScheduleHoldRequest extends BasePayloadRequest {
         payload.writeUint8(endDate?.getHours()  ?? 0, 6);
         payload.writeUint8(endDate?.getDay() ?? 0, 7);
         payload.writeUint8(endDate?.getMonth() ?? 0, 8);
-        payload.writeUint8((endDate?.getFullYear() - 2000) ?? 0, 9);
+        payload.writeUint8(endDate ? endDate.getFullYear() - 2000 : 0, 9);
         return payload;
     }
 }
