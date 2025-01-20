@@ -84,7 +84,7 @@ export class AprilaireClient extends EventEmitter {
             this.mac = response.macAddress;
 
         else if (response instanceof ThermostatNameResponse)
-            this.name = response.name;
+            this.name = response.name?.trim() ?? "Thermostat";
 
         else if (response instanceof RevisionAndModelResponse) {
             this.firmware = `${response.firmwareMajor}.${response.firmwareMinor.toFixed(2)}`;

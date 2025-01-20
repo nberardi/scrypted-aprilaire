@@ -45,7 +45,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     thermostats = new Map<string, AprilaireThermostat | AprilaireHumidifier | AprilaireDehumidifier>();
     outdoorSensors = new Map<string, AprilaireOutdoorThermometer>();
     automatedOutdoorSensors: string[] = [];
-    automatedOutdoorSensorsTimer: NodeJS.Timer;
+    automatedOutdoorSensorsTimer: NodeJS.Timeout;
 
     constructor(nativeId?: string) {
         super(nativeId);
