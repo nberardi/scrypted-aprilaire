@@ -85,6 +85,8 @@ export class RevisionAndModelResponse extends BasePayloadResponse {
             case 5: return "8830";
             case 6: return "8920W";
             case 7: return "8840";
+            case 14: return "8840M";
+            case 28: return "6003";
         }
     }
 }
