@@ -48,11 +48,16 @@ describe("Status domainx", () => {
 
         it("enables core runtime subscriptions used by best practices", () => {
             const buf = new CosRequest().toBuffer();
-            // Subscription indicesexpect(buf[5]).toBe(1); // Thermostat Setpoint & Mode
+            // Subscription indices
+            expect(buf[0]).toBe(1); // Installer Thermostat Settings (Setup/1 — deadband, Away, Heat Blast)
+            expect(buf[5]).toBe(1); // Thermostat Setpoint & Mode
             expect(buf[6]).toBe(1); // Dehumidification Setpoint
             expect(buf[7]).toBe(1); // Humidification Setpoint
             expect(buf[10]).toBe(1); // Thermostat IAQ Available
+            expect(buf[12]).toBe(1); // Away Settings
             expect(buf[14]).toBe(1); // Schedule Hold
+            expect(buf[15]).toBe(1); // Heat Blast
+            expect(buf[16]).toBe(1); // Service Reminders Status
             expect(buf[22]).toBe(1); // Controlling Sensor Values
             expect(buf[24]).toBe(1); // Thermostat Status
             expect(buf[25]).toBe(1); // IAQ Status
