@@ -1,6 +1,7 @@
 import { FunctionalDomain, FunctionalDomainControl, convertByteToTemperature, convertTemperatureToByte } from "./AprilaireClient";
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { BasePayloadRequest } from "./BasePayloadRequest";
+import { DEFAULT_DEADBAND_C } from "./FunctionalDomainSetup";
 
 /*
 *
@@ -18,6 +19,63 @@ import { BasePayloadRequest } from "./BasePayloadRequest";
 * Thermostat & IAQ Available                |   0x07    |   Yes |   R   |   X
 *
 */
+
+/**
+ * Which setpoint to keep when enforcing deadband (Auto mode).
+ *
+ * Policy (protocol §J.6 / §2.1):
+ * - `"heat"` — preserve heat; raise cool to heat + deadband if needed.
+ * - `"cool"` — preserve cool; lower heat to cool − deadband if needed.
+ * - `"both"` — dual write with no preferred side: preserve heat, raise cool
+ *   (matches “non-active / secondary side adjusts” when heat is treated as primary).
+ *
+ * Guide example (°F → °C at protocol layer): Heat 70°F≈21°C, Cool 73°F≈22.5°C,
+ * deadband 3°F≈1.5°C. Lowering cool to 72°F≈22°C with preserve `"cool"` yields heat 20.5°C.
+ */
+export type DeadbandPreserve = "heat" | "cool" | "both";
+
+export interface DeadbandEnforcementResult {
+    heatSetpoint: number;
+    coolSetpoint: number;
+    /** True when either setpoint was changed to satisfy deadband. */
+    adjusted: boolean;
+}
+
+/**
+ * Ensure cool − heat ≥ deadbandC (protocol Auto-mode minimum separation).
+ * Pure helper — unit-testable without Scrypted or TCP.
+ *
+ * @param heatSetpoint Heat setpoint in °C
+ * @param coolSetpoint Cool setpoint in °C
+ * @param deadbandC Minimum separation in °C (default 1.5°C / 3°F)
+ * @param preserve Which side to keep when adjusting (see {@link DeadbandPreserve})
+ */
+export function enforceDeadband(
+    heatSetpoint: number,
+    coolSetpoint: number,
+    deadbandC: number = DEFAULT_DEADBAND_C,
+    preserve: DeadbandPreserve = "both"
+): DeadbandEnforcementResult {
+    const separation = coolSetpoint - heatSetpoint;
+    if (separation >= deadbandC) {
+        return { heatSetpoint, coolSetpoint, adjusted: false };
+    }
+
+    if (preserve === "cool") {
+        return {
+            heatSetpoint: coolSetpoint - deadbandC,
+            coolSetpoint,
+            adjusted: true,
+        };
+    }
+
+    // preserve "heat" or "both": keep heat, raise cool
+    return {
+        heatSetpoint,
+        coolSetpoint: heatSetpoint + deadbandC,
+        adjusted: true,
+    };
+}
 
 export class ThermostatSetpointAndModeSettingsResponse extends BasePayloadResponse {
     mode: ThermostatMode;

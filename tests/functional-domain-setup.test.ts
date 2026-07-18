@@ -17,6 +17,8 @@ import { describe, expect, it } from "vitest";
 import {
     DateAndTimeRequest,
     DateAndTimeResponse,
+    DEFAULT_DEADBAND_C,
+    deadbandIndexToCelsius,
     deadbandToCelsius,
     filterHoldChoicesForInstaller,
     isServiceReminderEnabled,
@@ -450,4 +452,26 @@ describe("Setup domain", () => {
             expect(shouldShowHeatBlastSetting(undefined)).toBe(false);
         });
     });
+
+    describe("deadbandIndexToCelsius (enforcement fallback)", () => {
+        it("maps indices 0–7 to 1.0–4.5 °C and falls back to default for reserved", () => {
+            expect(DEFAULT_DEADBAND_C).toBe(1.5);
+            const expected = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5];
+            for (let i = 0; i <= 7; i++) {
+                expect(deadbandIndexToCelsius(i)).toBe(expected[i]);
+            }
+            expect(deadbandIndexToCelsius(8)).toBe(DEFAULT_DEADBAND_C);
+            expect(deadbandIndexToCelsius(-1)).toBe(DEFAULT_DEADBAND_C);
+        });
+
+        it("installer payload byte 13 feeds deadband index for enforcement (°C)", () => {
+            const payload = makeInstallerPayload({ deadband: 1, autoChangeover: 1 });
+            const res = new ThermostatInstallerSettingsResponse(payload);
+            expect(res.deadband).toBe(1);
+            expect(deadbandIndexToCelsius(res.deadband)).toBe(1.5);
+            // Guide-style default 3°F → 1.5°C
+            expect(deadbandIndexToCelsius(res.deadband)).toBe(DEFAULT_DEADBAND_C);
+        });
+    });
+
 });

@@ -261,6 +261,13 @@ function readU8(payload: Buffer, offset: number, fallback: number): number {
 }
 
 /**
+ * Default deadband when installer settings have not been received yet.
+ * Protocol default is index 1 = 3°F / 1.5°C (see §1.1 Deadband / §J.6).
+ * Protocol layer always works in °C.
+ */
+export const DEFAULT_DEADBAND_C = 1.5;
+
+/**
  * Convert guide deadband enum (byte 13) to Celsius separation.
  * 0→1, 1→1.5, … 7→4.5. Out-of-range values return NaN (caller should not invent).
  */
@@ -268,6 +275,16 @@ export function deadbandToCelsius(deadband: number): number {
     if (!Number.isInteger(deadband) || deadband < 0 || deadband > 7)
         return Number.NaN;
     return 1 + deadband * 0.5;
+}
+
+/**
+ * Decode deadband index for enforcement: valid indices map like
+ * {@link deadbandToCelsius}; reserved/out-of-range fall back to
+ * {@link DEFAULT_DEADBAND_C} so Auto writes still have a safe separation.
+ */
+export function deadbandIndexToCelsius(index: number): number {
+    const c = deadbandToCelsius(index);
+    return Number.isNaN(c) ? DEFAULT_DEADBAND_C : c;
 }
 
 /**
