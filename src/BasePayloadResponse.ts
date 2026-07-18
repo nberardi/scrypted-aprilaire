@@ -20,16 +20,19 @@ export class BasePayloadResponse {
 
 /**
  * NACK is Action + StatusCode only (no functional domain / attribute).
- * Retry policy (caller responsibility):
+ * Retry policy (OutboundRequestQueue / Guide §H.5):
  *   0x01, 0x03, 0x09 → retry up to 2 additional times with 0.5–1s delay
  *   all other codes → clear the transaction
  */
 export class NackResponse extends BasePayloadResponse {
     statusCode: NAckError | number;
+    /** Sequence from the NACK frame (correlates to the outbound request). */
+    sequence?: number;
 
-    constructor(statusCode: number) {
+    constructor(statusCode: number, sequence?: number) {
         super(Buffer.from([statusCode]), FunctionalDomain.NAck, statusCode);
         this.statusCode = statusCode;
+        this.sequence = sequence;
     }
 
     /** Codes that should be retried before clearing the transaction */
