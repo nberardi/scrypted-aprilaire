@@ -7,7 +7,7 @@ import { EventEmitter } from "events";
 import { ThermostatAndIAQAvailableResponse, FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse, ThermostatSetpointAndModeSettingsResponse } from "./FunctionalDomainControl";
 import { MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse } from "./FunctionalDomainIdentification";
 import { ControllingSensorsStatusAndValueResponse, SensorValuesResponse, WrittenOutdoorTemperatureValueResponse } from "./FunctionalDomainSensors";
-import { ThermostatInstallerSettingsResponse, ScaleResponse } from "./FunctionalDomainSetup";
+import { ThermostatInstallerSettingsResponse, ScaleResponse, DateAndTimeRequest, DateAndTimeResponse } from "./FunctionalDomainSetup";
 import { CosRequest, IAQStatusResponse, ThermostatStatusResponse, SyncResponse, ThermostatErrorResponse, OfflineResponse } from "./FunctionalDomainStatus";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse, NackResponse } from "./BasePayloadResponse";
@@ -18,6 +18,11 @@ import { OutboundRequest, OutboundRequestQueue, PermanentNackEvent } from "./Out
 export class AprilaireClient extends EventEmitter {
     private client: AprilaireSocket;
     private ready: boolean = false;
+    /** Periodic Setup/DateAndTime rewrite (guide: at least monthly). */
+    private dateTimeResyncTimer?: ReturnType<typeof setInterval>;
+
+    /** ~30 days — guide §J.3 recommends refreshing the clock at least monthly. */
+    private static readonly DATE_TIME_RESYNC_MS = 30 * 24 * 60 * 60 * 1000;
 
     name: string;
     firmware: string;
@@ -60,10 +65,14 @@ export class AprilaireClient extends EventEmitter {
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
             self.client.writeObjectRequest(new CosRequest());
-    
+            // Guide §J.3 / Setup §1.4: automation owns the thermostat clock (local wall time).
+            self.syncDateAndTime();
+            self.startDateTimeResync();
+
             self.emit("connected", self);
         });
         this.client.once("disconnected", (err?: Error) => {
+            self.stopDateTimeResync();
             self.emit("disconnected", self, err);
         });
         this.client.on("response", (response: BasePayloadResponse) => {
@@ -77,7 +86,35 @@ export class AprilaireClient extends EventEmitter {
     }
 
     disconnect() {
+        this.stopDateTimeResync();
         this.client.disconnect();
+    }
+
+    /**
+     * Write Setup/DateAndTime with the host's **local** wall-clock time
+     * (not UTC). Thermostat schedules are local.
+     */
+    syncDateAndTime(when: Date = new Date()): void {
+        const request = DateAndTimeRequest.fromLocalDate(when);
+        this.client.writeObjectRequest(request);
+    }
+
+    private startDateTimeResync(): void {
+        this.stopDateTimeResync();
+        this.dateTimeResyncTimer = setInterval(() => {
+            if (this.client.connected) {
+                this.syncDateAndTime();
+            }
+        }, AprilaireClient.DATE_TIME_RESYNC_MS);
+        // Do not keep the process alive solely for monthly clock refresh.
+        this.dateTimeResyncTimer.unref?.();
+    }
+
+    private stopDateTimeResync(): void {
+        if (this.dateTimeResyncTimer) {
+            clearInterval(this.dateTimeResyncTimer);
+            this.dateTimeResyncTimer = undefined;
+        }
     }
 
     private clientResponse(response: BasePayloadResponse) {
@@ -704,6 +741,8 @@ export class AprilaireResponsePayload {
                         return new ThermostatInstallerSettingsResponse(this.payload);
                     case FunctionalDomainSetup.Scale:
                         return new ScaleResponse(this.payload);
+                    case FunctionalDomainSetup.DateAndTime:
+                        return new DateAndTimeResponse(this.payload);
                 }
                 break;
             case FunctionalDomain.Identification:
