@@ -12,11 +12,15 @@ import {
     ThermostatSetpointAndModeSettingsRequest,
 } from "../src/FunctionalDomainControl";
 import {
+    ThermostatInstallerSettingsRequest,
+} from "../src/FunctionalDomainSetup";
+import {
     Action,
     FunctionalDomain,
     FunctionalDomainControl,
     FunctionalDomainIdentification,
     FunctionalDomainSensors,
+    FunctionalDomainSetup,
     FunctionalDomainStatus,
 } from "../src/AprilaireClient";
 import { GuideAttribute } from "./helpers/guide-reference";
@@ -75,6 +79,19 @@ describe("Best practices bootstrap checklist", () => {
         const sensors = new ControllingSensorsStatusAndValueRequest();
         expect(sensors.domain).toBe(FunctionalDomain.Sensors);
         expect(sensors.attribute).toBe(FunctionalDomainSensors.ControllingSensorValues);
+    });
+
+    it("Setup/1 installer settings request exists for J6/J16 (deadband, Away enable)", () => {
+        const installer = new ThermostatInstallerSettingsRequest();
+        expect(installer.domain).toBe(FunctionalDomain.Setup);
+        expect(installer.attribute).toBe(FunctionalDomainSetup.ThermostatInstallSettings);
+        expect(installer.attribute).toBe(GuideAttribute.Setup.ThermostatInstallerSettings);
+        expect(installer.toBuffer().length).toBe(0);
+    });
+
+    it("COS subscribes to Installer Thermostat Settings (byte 0) for Sync/COS delivery", () => {
+        const cos = new CosRequest().toBuffer();
+        expect(cos[0]).toBe(1);
     });
 
     describe("current connect sequence contract (documents gaps)", () => {

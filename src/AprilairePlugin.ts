@@ -4,7 +4,7 @@ import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { ControllingSensorsStatusAndValueRequest, ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, WrittenOutdoorTemperatureValueRequest } from './FunctionalDomainSensors';
-import { ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
+import { ThermostatInstallerSettingsRequest, ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
 import { HeatBlastResponse, HoldType, ScheduleHoldRequest, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 import { SyncRequest } from './FunctionalDomainStatus';
 import { setInterval } from 'node:timers';
@@ -298,7 +298,9 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 s.setItem("host", host);
                 s.setItem("port", port.toString());
 
-                // send a sync request to get a refresh of the current state
+                // Explicit Setup/1 read for deadband / Away / Heat Blast gates (also COS-subscribed).
+                client.read(new ThermostatInstallerSettingsRequest());
+                // Sync dumps current state for all COS-subscribed attributes (includes Setup/1).
                 client.write(new SyncRequest());
 
                 // not needed unless we are refreshing the entire list of devices

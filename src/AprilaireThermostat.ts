@@ -2,7 +2,14 @@ import { Fan, FanMode, FanState, FanStatus, FilterMaintenance, HumidityCommand, 
 import { AprilaireClient } from './AprilaireClient';
 import { AprilaireSystemType, AprilaireThermostatBase } from './AprilaireThermostatBase';
 import { DehumidificationSetpointResponse, FanModeSetting, HumidificationSetpointResponse, HumidificationState, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode} from './FunctionalDomainControl';
-import { ScaleRequest, ScaleResponse, TemperatureScale, ThermostatInstallerSettingsResponse } from './FunctionalDomainSetup';
+import {
+    filterHoldChoicesForInstaller,
+    ScaleRequest,
+    ScaleResponse,
+    shouldShowHeatBlastSetting,
+    TemperatureScale,
+    ThermostatInstallerSettingsResponse,
+} from './FunctionalDomainSetup';
 import { HeatBlastRequest, HeatBlastResponse, HoldType, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 import { CoolingStatus, FanStatus as TFanStatus, HeatingStatus, ThermostatStatusResponse } from './FunctionalDomainStatus';
 import { BasePayloadResponse } from './BasePayloadResponse';
@@ -12,6 +19,11 @@ import { StorageSettingsDevice, StorageSettings } from '@scrypted/sdk/storage-se
 export class AprilaireThermostat extends AprilaireThermostatBase implements OnOff, Settings, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySensor, HumiditySetting, FilterMaintenance, Fan {
     private _heatBlastState: boolean;
     private _holdState: string;
+    /**
+     * Last Setup/1 installer settings (scale, deadband, Away/Heat Blast enables, etc.).
+     * Undefined until COS/Sync or an explicit read delivers ThermostatInstallerSettingsResponse.
+     */
+    private _installerSettings?: ThermostatInstallerSettingsResponse;
 
     readonly deviceOn = "On";
     readonly deviceOff = "Off";
@@ -20,6 +32,15 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
     readonly holdPermanent = "Permanent";
     readonly holdAway = "Away";
     readonly holdVacation = "Vacation";
+
+    /** All hold choices; Away is filtered out when installer Away is disabled. */
+    readonly holdChoices = ["Schedule", "Temporary", "Permanent", "Away", "Vacation"] as const;
+
+    /**
+     * Deadband raw enum from installer settings (byte 13). Stable name for #15.
+     * Undefined until installer settings are received.
+     */
+    deadband?: number;
 
     storageSettings = new StorageSettings(this, {
         host: {
@@ -86,22 +107,38 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
     }
 
     async getSettings(): Promise<Setting[]> {
-        let s = await this.storageSettings.getSettings();
+        const s = await this.storageSettings.getSettings();
 
-        const hb = this.systemType === AprilaireSystemType.Thermostat && this.storageSettings.values.heatBlast;
-        const h = this.systemType === AprilaireSystemType.Thermostat && this.storageSettings.values.hold;
+        // Gate Heat Blast / Away from installer Setup/1 enables (defaults: hide until known).
+        const heatBlastEnabled = this._installerSettings?.heatBlastEnabled;
+        const awayEnabled = this._installerSettings?.awayEnabled === true;
+        const showHeatBlast = shouldShowHeatBlastSetting(heatBlastEnabled);
 
-        const settings = s.filter(setting => {
-            if (!hb && setting.key.startsWith("heatBlast"))
-                return false;
-            else if (!h && setting.key.startsWith("hold"))
-                return false;
-            else
-                return true;
-        });
+        const settings: Setting[] = [];
+        for (const setting of s) {
+            if (setting.key?.startsWith("heatBlast")) {
+                if (!showHeatBlast)
+                    continue;
+                settings.push(setting);
+                continue;
+            }
+
+            if (setting.key?.startsWith("hold")) {
+                const choices = filterHoldChoicesForInstaller(
+                    setting.choices ?? [...this.holdChoices],
+                    awayEnabled,
+                    this.holdAway
+                );
+                settings.push({ ...setting, choices });
+                continue;
+            }
+
+            settings.push(setting);
+        }
 
         return settings;
     }
+
     putSetting(key: string, value: SettingValue): Promise<void> {
         return this.storageSettings.putSetting(key, value);
     }
@@ -292,7 +329,14 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         }
 
         else if (response instanceof ThermostatInstallerSettingsResponse) {
+            this._installerSettings = response;
+            this.deadband = response.deadband;
             this.temperatureUnit = response.scale === TemperatureScale.F ? TemperatureUnit.F : TemperatureUnit.C;
+            this.console.info(
+                `installer settings: scale=${response.scale}, deadband=${response.deadband} (${response.deadbandCelsius}C), ` +
+                `away=${response.awayEnabled}, heatBlast=${response.heatBlastEnabled}, outdoor=${response.outdoorSensor}, ` +
+                `hvacReminder=${response.hvacServiceReminderMonths}`
+            );
         }
 
         else if (response instanceof HeatBlastResponse) {
