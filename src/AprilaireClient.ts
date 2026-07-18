@@ -13,6 +13,7 @@ import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse, NackResponse } from "./BasePayloadResponse";
 import { AwaySettingsResponse, HeatBlastResponse, ScheduleHoldResponse } from "./FunctionalDomainScheduling";
 import { AlertsStatusResponse, ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
+import { OutboundRequest, OutboundRequestQueue, PermanentNackEvent } from "./OutboundRequestQueue";
 
 export class AprilaireClient extends EventEmitter {
     private client: AprilaireSocket;
@@ -67,6 +68,9 @@ export class AprilaireClient extends EventEmitter {
         });
         this.client.on("response", (response: BasePayloadResponse) => {
             this.clientResponse(response);
+        });
+        this.client.on("nack", (event: PermanentNackEvent) => {
+            self.emit("nack", event, self);
         });
 
         this.client.connect();
@@ -689,8 +693,8 @@ export class AprilaireResponsePayload {
             const statusCode = this.payload?.length
                 ? this.payload.readUint8(0)
                 : (this.attribute || Number(this.domain));
-            console.warn(this.format(`NACK status=0x${statusCode.toString(16)} (${NAckError[statusCode] ?? "Unknown"})`));
-            return new NackResponse(statusCode);
+            console.warn(this.format(`NACK status=0x${statusCode.toString(16)} (${NAckError[statusCode] ?? "Unknown"}) sequence=${this.sequence}`));
+            return new NackResponse(statusCode, this.sequence);
         }
 
         switch(this.domain) {
@@ -783,10 +787,10 @@ class AprilaireSocket extends EventEmitter {
     port: number;
     
     private client: net.Socket;
-    private sequence: number = 0;
     private _connected: boolean = true;
     /** Sticky TCP receive buffer: retains incomplete frame tails across `data` events. */
     private receiveBuffer: Buffer = Buffer.alloc(0);
+    private outboundQueue: OutboundRequestQueue;
 
     get connected() : boolean {
         return this._connected;
@@ -797,6 +801,23 @@ class AprilaireSocket extends EventEmitter {
 
         this.host = host;
         this.port = port;
+
+        this.outboundQueue = new OutboundRequestQueue(
+            (sequence, request) => this.buildFrame(sequence, request),
+            (frame) => {
+                if (this.client)
+                    this.client.write(frame);
+            },
+            undefined,
+            {
+                onPermanentNack: (event) => {
+                    console.warn(this.format(
+                        `permanent NACK status=0x${event.statusCode.toString(16)} (${NAckError[event.statusCode] ?? "Unknown"}) sequence=${event.sequence} attempts=${event.attempts}`
+                    ));
+                    this.emit("nack", event);
+                },
+            }
+        );
     }
 
     private format(message: string): string {
@@ -812,12 +833,14 @@ class AprilaireSocket extends EventEmitter {
         this._connected = false;
         this.receiveBuffer = Buffer.alloc(0);
         this.client = new net.Socket();
+        this.outboundQueue.reset();
 
         this.client.on("close", (hadError: boolean) => {
             console.debug(self.format(`close`), hadError);
 
             self._connected = false;
             self.receiveBuffer = Buffer.alloc(0);
+            self.outboundQueue.reset();
             self.emit('disconnected');
         });
 
@@ -860,6 +883,12 @@ class AprilaireSocket extends EventEmitter {
                             frame.crc
                         );
                         const payload = element.toObject();
+
+                        if (payload instanceof NackResponse) {
+                            const seq = payload.sequence ?? element.sequence;
+                            self.outboundQueue.handleNack(payload.statusCode, seq);
+                        }
+
                         if (payload)
                             self.emit('response', payload);
                     }
@@ -893,6 +922,7 @@ class AprilaireSocket extends EventEmitter {
 
     disconnect() {
         this.receiveBuffer = Buffer.alloc(0);
+        this.outboundQueue.reset();
         this.client.destroy();
         this.client = undefined;
     }
@@ -911,13 +941,23 @@ class AprilaireSocket extends EventEmitter {
     }
 
     private sendCommand(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup, data: Buffer = Buffer.alloc(0)) {
+        const request: OutboundRequest = { action, domain, attribute, data };
+        console.debug(this.format(
+            `queuing data, action=${Action[action]}, functional_domain=${FunctionalDomain[domain]}, attribute=${attribute}, pending=${this.outboundQueue.pendingCount}`
+        ));
+        this.outboundQueue.enqueue(request);
+    }
+
+    /** Build a wire frame for the given sequence (used by OutboundRequestQueue; retries reuse the same frame). */
+    private buildFrame(sequence: number, request: OutboundRequest): Buffer {
+        const data = request.data ?? Buffer.alloc(0);
         const header = Buffer.alloc(7);
-        header.writeUint8(1, 0), // protocol revisoin
-        header.writeUint8(this.sequence, 1); // message counter sequence
+        header.writeUint8(1, 0); // protocol revision
+        header.writeUint8(sequence, 1); // message counter sequence
         header.writeUint16BE(3 + data.byteLength, 2); // byte count of payload
-        header.writeUint8(action, 4); // action
-        header.writeUint8(domain, 5); // functional domain or status code
-        header.writeUint8(attribute, 6); // attribute being affected
+        header.writeUint8(request.action, 4); // action
+        header.writeUint8(request.domain, 5); // functional domain
+        header.writeUint8(request.attribute, 6); // attribute being affected
 
         const payload = Buffer.concat([header, data], header.byteLength + data.byteLength);
         const payloadCrc = generateCrc(payload);
@@ -925,11 +965,10 @@ class AprilaireSocket extends EventEmitter {
         const frame = Buffer.alloc(payload.byteLength + 1, payload);
         frame.writeUint8(payloadCrc, frame.byteLength - 1);
 
-        console.debug(this.format(`queuing data, sequence=${this.sequence}, action=${Action[action]}, functional_domain=${FunctionalDomain[domain]}, attribute=${attribute}, data=${frame.toString("base64")}`));
+        console.debug(this.format(
+            `sending data, sequence=${sequence}, action=${Action[request.action]}, functional_domain=${FunctionalDomain[request.domain]}, attribute=${request.attribute}, data=${frame.toString("base64")}`
+        ));
 
-        // increment sequence for next command
-        this.sequence = (this.sequence + 1) % 127;
-        
-        this.client.write(frame);
+        return frame;
     }
 }
