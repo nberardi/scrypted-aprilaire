@@ -60,22 +60,28 @@ export class SensorValuesResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Sensors, FunctionalDomainSensors.SensorValues);
 
-        this.indoorTemperatureStatus = payload.readUint8(0);
-        this.indoorTemperature = convertByteToTemperature(payload.readUint8(1));
-        this.indoorWiredRemoteTemperatureStatus = payload.readUint8(2);
-        this.indoorWiredRemoteTemperature = convertByteToTemperature(payload.readUint8(3));
-        this.outdoorTemperatureStatus = payload.readUint8(4);
-        this.outdoorTemperature = convertByteToTemperature(payload.readUint8(5));
-        this.indoorHumidityStatus = payload.readUint8(6);
-        this.indoorHumidity = payload.readUint8(7);
-        this.returningAirTemperatureStatus = payload.readUint8(8);
-        this.returningAirTemperature = convertByteToTemperature(payload.readUint8(9));
-        this.leavingAirTemperatureStatus = payload.readUint8(10);
-        this.leavingAirTemperature = convertByteToTemperature(payload.readUint8(11));
-        this.outdoorWirelessTemperatureStatus = payload.readUint8(12);
-        this.outdoorWirelessTemperature = convertByteToTemperature(payload.readUint8(13));
-        this.outdoorHumidityStatus = payload.readUint8(14);
-        this.outdoorHumidity = payload.readUint8(15);
+        // Guide: 16 status/value bytes. Pad short payloads so partial replies still parse
+        // (remaining sensors default to NotInstalled / 0) rather than throwing.
+        const data = payload.length >= 16
+            ? payload
+            : Buffer.concat([payload, Buffer.alloc(16 - payload.length, TemperatureSensorStatus.NotInstalled)]);
+
+        this.indoorTemperatureStatus = data.readUint8(0);
+        this.indoorTemperature = convertByteToTemperature(data.readUint8(1));
+        this.indoorWiredRemoteTemperatureStatus = data.readUint8(2);
+        this.indoorWiredRemoteTemperature = convertByteToTemperature(data.readUint8(3));
+        this.outdoorTemperatureStatus = data.readUint8(4);
+        this.outdoorTemperature = convertByteToTemperature(data.readUint8(5));
+        this.indoorHumidityStatus = data.readUint8(6);
+        this.indoorHumidity = data.readUint8(7);
+        this.returningAirTemperatureStatus = data.readUint8(8);
+        this.returningAirTemperature = convertByteToTemperature(data.readUint8(9));
+        this.leavingAirTemperatureStatus = data.readUint8(10);
+        this.leavingAirTemperature = convertByteToTemperature(data.readUint8(11));
+        this.outdoorWirelessTemperatureStatus = data.readUint8(12);
+        this.outdoorWirelessTemperature = convertByteToTemperature(data.readUint8(13));
+        this.outdoorHumidityStatus = data.readUint8(14);
+        this.outdoorHumidity = data.readUint8(15);
     }
 }
 

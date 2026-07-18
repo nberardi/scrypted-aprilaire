@@ -9,6 +9,7 @@ import {
     HVACAutomationSetting,
     MacAddressResponse,
     RevisionAndModelResponse,
+    sanitizeIdentificationText,
     ThermostatNameResponse,
 } from "../src/FunctionalDomainIdentification";
 import {
@@ -108,8 +109,14 @@ describe("Identification domainx", () => {
             const res = new ThermostatNameResponse(payload);
             expect(res.attribute).toBe(GuideAttribute.Identification.ThermostatName);
             expect(res.domain).toBe(GuideDomain.Identification);
-            expect(res.postalCode.replace(/\0/g, "").trim()).toContain("12345");
-            expect(res.name.replace(/\0/g, "").trim()).toContain("Living Room");
+            expect(res.postalCode).toBe("12345");
+            expect(res.name).toBe("Living Room");
+        });
+
+        it("sanitizeIdentificationText strips NULs and control characters", () => {
+            expect(sanitizeIdentificationText("Main Floor\0\0\0")).toBe("Main Floor");
+            expect(sanitizeIdentificationText(Buffer.alloc(15, 0))).toBe("");
+            expect(sanitizeIdentificationText("  Upstairs  ")).toBe("Upstairs");
         });
     });
 });

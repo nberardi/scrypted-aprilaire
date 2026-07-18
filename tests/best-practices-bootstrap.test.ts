@@ -17,6 +17,7 @@ import {
 } from "../src/FunctionalDomainSetup";
 import {
     Action,
+    AprilaireClient,
     FunctionalDomain,
     FunctionalDomainControl,
     FunctionalDomainIdentification,
@@ -151,6 +152,17 @@ describe("Best practices bootstrap checklist", () => {
             expect(req.attribute).toBe(0x04);
             expect(req.toBuffer()).toEqual(guideEncodeDateAndTime(local));
             expect(req.toBuffer()).toEqual(Buffer.from([45, 30, 14, 18, 6, 7, 26]));
+        });
+
+        it("DateAndTime resync interval fits in a 32-bit signed timer delay", () => {
+            // Regression: 30 * 24 * 60 * 60 * 1000 = 2_592_000_000 overflows
+            // Node setInterval (max 2^31-1), becoming ~1ms and flooding Setup/4.
+            expect(AprilaireClient.DATE_TIME_RESYNC_MS).toBeLessThanOrEqual(
+                AprilaireClient.MAX_TIMER_DELAY_MS
+            );
+            expect(AprilaireClient.DATE_TIME_RESYNC_MS).toBeGreaterThan(24 * 60 * 60 * 1000);
+            // Still “at least monthly” by refreshing more often than 30 days.
+            expect(AprilaireClient.DATE_TIME_RESYNC_MS).toBeLessThanOrEqual(30 * 24 * 60 * 60 * 1000);
         });
     });
 });

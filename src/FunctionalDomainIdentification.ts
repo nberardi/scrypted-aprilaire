@@ -17,15 +17,24 @@ import { BasePayloadResponse } from "./BasePayloadResponse";
 export class ThermostatNameResponse extends BasePayloadResponse {
     postalCode: string;
     name: string;
-    constructor(payload: Buffer) {
-        super(payload, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
+    constructor(payload: Buffer, attribute: number = FunctionalDomainIdentification.ThermostatName) {
+        super(payload, FunctionalDomain.Identification, attribute);
 
         const postalCodeBytes = payload.subarray(0, 7);
-        const nameBytes = payload.subarray(8, 8 + 15);
+        const nameBytes = payload.length >= 8
+            ? payload.subarray(8, Math.min(payload.length, 8 + 15))
+            : Buffer.alloc(0);
 
-        this.postalCode = postalCodeBytes.toString("ascii");
-        this.name = nameBytes.toString("ascii");
+        // Protocol pads with NUL; strip all nulls and control bytes for a clean label.
+        this.postalCode = sanitizeIdentificationText(postalCodeBytes);
+        this.name = sanitizeIdentificationText(nameBytes);
     }
+}
+
+/** ASCII identification strings are fixed-width and NUL-padded on the wire. */
+export function sanitizeIdentificationText(bytes: Buffer | string): string {
+    const raw = typeof bytes === "string" ? bytes : bytes.toString("ascii");
+    return raw.replace(/\0/g, "").replace(/[\x00-\x1f\x7f]/g, "").trim();
 }
 
 export class MacAddressResponse extends BasePayloadResponse {
