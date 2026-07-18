@@ -12,7 +12,7 @@ import {
     TemperatureScale,
     ThermostatInstallerSettingsResponse,
 } from './FunctionalDomainSetup';
-import { HeatBlastRequest, HeatBlastResponse, HoldType, ScheduleHoldResponse } from './FunctionalDomainScheduling';
+import { buildScheduleHoldRequest, HeatBlastRequest, HeatBlastResponse, holdTypeToUiValue, HOLD_UI, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 import { CoolingStatus, FanStatus as TFanStatus, HeatingStatus, ThermostatStatusResponse } from './FunctionalDomainStatus';
 import { BasePayloadResponse } from './BasePayloadResponse';
 import { ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
@@ -34,11 +34,16 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
 
     readonly deviceOn = "On";
     readonly deviceOff = "Off";
-    readonly holdSchedule = "Schedule";
-    readonly holdTemporary = "Temporary";
-    readonly holdPermanent = "Permanent";
-    readonly holdAway = "Away";
-    readonly holdVacation = "Vacation";
+    readonly holdSchedule = HOLD_UI.Schedule;
+    readonly holdTemporary = HOLD_UI.Temporary;
+    readonly holdPermanent = HOLD_UI.Permanent;
+    readonly holdAway = HOLD_UI.Away;
+    readonly holdVacation = HOLD_UI.Vacation;
+
+    /** Default Temporary hold duration when no end date is supplied by the UI. */
+    static readonly DEFAULT_TEMPORARY_HOLD_MS = 4 * 60 * 60 * 1000;
+    /** Default Vacation end when no return date is supplied by the UI. */
+    static readonly DEFAULT_VACATION_HOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
     /** All hold choices; Away is filtered out when installer Away is disabled. */
     readonly holdChoices = ["Schedule", "Temporary", "Permanent", "Away", "Vacation"] as const;
@@ -72,7 +77,7 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         hold: {
             title: "Temperature Hold",
             type: "string",
-            choices: ["Schedule", "Temporary", "Permanent", "Away", "Vacation"],
+            choices: [HOLD_UI.Schedule, HOLD_UI.Temporary, HOLD_UI.Permanent, HOLD_UI.Away, HOLD_UI.Vacation],
             description: "The type of temperature hold the thermostat is following.",
             noStore: true,
             onPut: this.setHold.bind(this)
@@ -164,7 +169,60 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         if (newValue === this._holdState)
             return;
 
-        this.console.error("setHold function status is work still needs to be done");
+        const uiValue = String(newValue);
+        const { heatSetpoint, coolSetpoint } = this.currentHoldSetpoints();
+        const fan = this.currentFanModeSetting();
+        const dehumidifierSetpoint = this.humiditySetting?.dehumidifierSetpoint;
+
+        let endDate: Date | undefined;
+        if (uiValue === this.holdTemporary) {
+            endDate = new Date(Date.now() + AprilaireThermostat.DEFAULT_TEMPORARY_HOLD_MS);
+        } else if (uiValue === this.holdVacation) {
+            endDate = new Date(Date.now() + AprilaireThermostat.DEFAULT_VACATION_HOLD_MS);
+        }
+
+        const request = buildScheduleHoldRequest(uiValue, {
+            fan,
+            heatSetpoint,
+            coolSetpoint,
+            dehumidifierSetpoint,
+            endDate,
+        });
+
+        this.client.write(request);
+        this._holdState = uiValue;
+        this.storageSettings.values.hold = uiValue;
+    }
+
+    /**
+     * Resolve current heat/cool setpoints from Scrypted temperatureSetting
+     * (single number or [low, high] pair) for hold writes.
+     */
+    private currentHoldSetpoints(): { heatSetpoint?: number; coolSetpoint?: number } {
+        const setpoint = this.temperatureSetting?.setpoint;
+        if (setpoint === undefined || setpoint === null) {
+            return {};
+        }
+        if (typeof setpoint === "number") {
+            switch (this.temperatureSetting?.mode) {
+                case ThermostatMode.Cool:
+                    return { coolSetpoint: setpoint };
+                case ThermostatMode.Heat:
+                default:
+                    return { heatSetpoint: setpoint };
+            }
+        }
+        const low = Math.min(setpoint[0], setpoint[1]);
+        const high = Math.max(setpoint[0], setpoint[1]);
+        return { heatSetpoint: low, coolSetpoint: high };
+    }
+
+    private currentFanModeSetting(): FanModeSetting {
+        if (this.fan?.mode === FanMode.Auto)
+            return FanModeSetting.Auto;
+        if (this.fan?.mode === FanMode.Manual)
+            return FanModeSetting.On;
+        return FanModeSetting.Null;
     }
 
     turnOff(): Promise<void> {
@@ -408,16 +466,6 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         this.client.write(request);
     }
 
-    private convertHold(type: HoldType): string {
-        switch (type) {
-            case HoldType.Disabled: return this.holdSchedule;
-            case HoldType.Temporary: return this.holdTemporary;
-            case HoldType.Permanent: return this.holdPermanent;
-            case HoldType.Away: return this.holdAway;
-            case HoldType.Vacation: return this.holdVacation;
-        }
-    }
-
     processResponse(response: BasePayloadResponse) {
         let fan: FanStatus = JSON.parse(JSON.stringify(this.fan));
 
@@ -459,7 +507,8 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         }
 
         else if (response instanceof ScheduleHoldResponse) {
-            this._holdState = this._holdState ?? this.convertHold(response.hold);
+            // Keep Settings UI in sync with COS / read responses
+            this._holdState = holdTypeToUiValue(response.hold);
             this.storageSettings.values.hold = this._holdState;
         }
 

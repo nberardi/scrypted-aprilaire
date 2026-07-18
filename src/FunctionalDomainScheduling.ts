@@ -87,6 +87,105 @@ export enum HoldType {
     Vacation = 4
 }
 
+/** UI choice labels for the Temperature Hold setting (StorageSettings). */
+export const HOLD_UI = {
+    Schedule: "Schedule",
+    Temporary: "Temporary",
+    Permanent: "Permanent",
+    Away: "Away",
+    Vacation: "Vacation",
+} as const;
+
+export type HoldUiValue = (typeof HOLD_UI)[keyof typeof HOLD_UI];
+
+/**
+ * Optional fields when building a Schedule Hold write.
+ * Omitted / undefined fields serialize as 0 on the wire (Null = do not modify),
+ * except hold itself which is always written.
+ */
+export interface BuildScheduleHoldOptions {
+    fan?: FanModeSetting;
+    heatSetpoint?: number;
+    coolSetpoint?: number;
+    dehumidifierSetpoint?: number;
+    /** Required for Temporary and Vacation holds (minute/hour/day/month/year−2000). */
+    endDate?: Date;
+}
+
+/**
+ * Map Settings UI string → HoldType.
+ * "Schedule" is the cancel / follow-schedule choice (Disabled on the wire).
+ */
+export function holdUiValueToHoldType(value: string): HoldType | undefined {
+    switch (value) {
+        case HOLD_UI.Schedule: return HoldType.Disabled;
+        case HOLD_UI.Temporary: return HoldType.Temporary;
+        case HOLD_UI.Permanent: return HoldType.Permanent;
+        case HOLD_UI.Away: return HoldType.Away;
+        case HOLD_UI.Vacation: return HoldType.Vacation;
+        default: return undefined;
+    }
+}
+
+/** Map HoldType from COS/read response → Settings UI string. */
+export function holdTypeToUiValue(type: HoldType): HoldUiValue {
+    switch (type) {
+        case HoldType.Disabled: return HOLD_UI.Schedule;
+        case HoldType.Temporary: return HOLD_UI.Temporary;
+        case HoldType.Permanent: return HOLD_UI.Permanent;
+        case HoldType.Away: return HOLD_UI.Away;
+        case HoldType.Vacation: return HOLD_UI.Vacation;
+        default: return HOLD_UI.Schedule;
+    }
+}
+
+/**
+ * Pure builder: UI hold choice (+ optional context) → ScheduleHoldRequest.
+ *
+ * Wire rules (Guide §3.4):
+ * - Cancel (Schedule): hold=Disabled, all other fields Null (0)
+ * - Temporary: hold type + end date; fan/setpoints when provided
+ * - Permanent: hold type + fan/setpoints as applicable
+ * - Away / Vacation: hold type + fan/setpoints; Vacation also needs end date
+ */
+export function buildScheduleHoldRequest(
+    uiValue: string,
+    options: BuildScheduleHoldOptions = {},
+): ScheduleHoldRequest {
+    const hold = holdUiValueToHoldType(uiValue);
+    if (hold === undefined) {
+        throw new Error(`Unknown hold UI value: ${uiValue}`);
+    }
+
+    const request = new ScheduleHoldRequest();
+    request.hold = hold;
+
+    // Cancel: leave fan/setpoints/endDate unset → toBuffer writes zeros (Null)
+    if (hold === HoldType.Disabled) {
+        return request;
+    }
+
+    if (options.fan !== undefined) {
+        request.fan = options.fan;
+    }
+    if (options.heatSetpoint !== undefined) {
+        request.heatSetpoint = options.heatSetpoint;
+    }
+    if (options.coolSetpoint !== undefined) {
+        request.coolSetpoint = options.coolSetpoint;
+    }
+    if (options.dehumidifierSetpoint !== undefined) {
+        request.dehumidifierSetpoint = options.dehumidifierSetpoint;
+    }
+
+    // Temporary and Vacation require an end date on the wire
+    if (hold === HoldType.Temporary || hold === HoldType.Vacation) {
+        request.endDate = options.endDate;
+    }
+
+    return request;
+}
+
 export class HeatBlastRequest extends BasePayloadRequest {
     heatBlast: boolean;
     constructor() {
