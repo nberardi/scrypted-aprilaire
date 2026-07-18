@@ -506,7 +506,11 @@ const crcMap = new Map<number,number>([
     [255, 172]
 ]);
 
-function generateCrc(data: Buffer): number {
+/**
+ * Aprilaire frame CRC (lookup-table). Used for both outbound frames and inbound validation.
+ * Exported for unit tests that build wire-valid fixtures.
+ */
+export function generateCrc(data: Buffer): number {
     let crc = 0;
     for (let index = 0; index < data.length; index++) {
         const byte = data[index];
@@ -514,6 +518,133 @@ function generateCrc(data: Buffer): number {
         crc = crcMap.get(key);
     }
     return crc;
+}
+
+/**
+ * One complete, CRC-validated Aprilaire TCP frame extracted from a byte stream.
+ *
+ * Wire layout: REV(1) SEQ(1) CNT(2 BE) + payload(CNT bytes) + CRC(1).
+ * Full frame size = 4 + CNT + 1.
+ *
+ * For normal frames, `payload` is the data after action/domain/attribute (bytes [7, 4+CNT)).
+ * For NACK (Action=6, CNT=2), layout is ACTION+STATUS; `domain` is FunctionalDomain.NAck,
+ * `attribute` is the status code, and `payload` is a single status byte.
+ */
+export interface ReassembledFrame {
+    revision: number;
+    sequence: number;
+    length: number;
+    action: Action;
+    domain: FunctionalDomain;
+    attribute: number;
+    payload: Buffer;
+    crc: number;
+}
+
+export interface FrameReassemblyResult {
+    /** Complete frames with valid CRC only. */
+    frames: ReassembledFrame[];
+    /** Incomplete trailing bytes retained for the next append. */
+    remainder: Buffer;
+    /** Number of candidate frames dropped due to CRC mismatch. */
+    crcFailures: number;
+}
+
+/**
+ * Parse zero or more complete Aprilaire frames from a sticky TCP receive buffer.
+ *
+ * Accumulation rule: do not emit a frame until `buffer.length >= 4 + length + 1`
+ * (header prefix + CNT payload + CRC). Incomplete tails stay in `remainder`.
+ *
+ * Multiple frames in one buffer are all extracted in order.
+ *
+ * CRC failure strategy (documented behavior for issue #17):
+ * When a full candidate frame is present but CRC does not match, drop that
+ * entire candidate (`4 + length + 1` bytes) and continue. Length is known from
+ * the header, so we prefer dropping one frame over byte-by-byte resync.
+ * Bad frames are never returned in `frames`. Callers should log each failure.
+ *
+ * Safety: if more than 50 complete candidates are processed in one call, stop
+ * and leave remaining bytes in `remainder` (defends against pathological input).
+ */
+export function reassembleFrames(buffer: Buffer): FrameReassemblyResult {
+    const frames: ReassembledFrame[] = [];
+    let workingData = buffer;
+    let crcFailures = 0;
+    let count = 0;
+
+    while (true) {
+        if (workingData.length === 0 || count > 50)
+            break;
+
+        // Need at least REV+SEQ+CNT (4 bytes) to read length
+        if (workingData.length < 4)
+            break;
+
+        const length = workingData.readUint16BE(2);
+        const frameSize = 4 + length + 1;
+
+        // Full frame not yet available — retain remainder for next TCP chunk
+        if (workingData.length < frameSize)
+            break;
+
+        const candidate = workingData.subarray(0, frameSize);
+        const body = candidate.subarray(0, 4 + length);
+        const crc = candidate[4 + length];
+        const crcCheck = generateCrc(body);
+
+        if (crc !== crcCheck) {
+            // Drop the bad frame's known span and continue with subsequent bytes.
+            crcFailures++;
+            workingData = workingData.subarray(frameSize);
+            count++;
+            continue;
+        }
+
+        const revision = workingData.readUint8(0);
+        const sequence = workingData.readUint8(1);
+        const action = workingData.readUint8(4) as Action;
+
+        // NACK CNT=2 → [Action][StatusCode], no domain/attribute.
+        // Byte layout: REV SEQ CNT_H CNT_L ACTION STATUS CRC
+        if (action === Action.NAck) {
+            const statusCode = workingData.readUint8(5);
+            frames.push({
+                revision,
+                sequence,
+                length,
+                action,
+                domain: FunctionalDomain.NAck,
+                attribute: statusCode,
+                payload: Buffer.from([statusCode]),
+                crc,
+            });
+        } else {
+            const domain = workingData.readUint8(5) as FunctionalDomain;
+            const attribute = workingData.readUint8(6);
+            // Data after the 7-byte header prefix (REV SEQ CNT ACTION DOMAIN ATTR)
+            const payload = workingData.subarray(7, 4 + length);
+            frames.push({
+                revision,
+                sequence,
+                length,
+                action,
+                domain,
+                attribute,
+                payload,
+                crc,
+            });
+        }
+
+        workingData = workingData.subarray(frameSize);
+        count++;
+    }
+
+    return {
+        frames,
+        remainder: workingData.length === 0 ? Buffer.alloc(0) : Buffer.from(workingData),
+        crcFailures,
+    };
 }
 
 export class AprilaireResponsePayload {
@@ -654,6 +785,8 @@ class AprilaireSocket extends EventEmitter {
     private client: net.Socket;
     private sequence: number = 0;
     private _connected: boolean = true;
+    /** Sticky TCP receive buffer: retains incomplete frame tails across `data` events. */
+    private receiveBuffer: Buffer = Buffer.alloc(0);
 
     get connected() : boolean {
         return this._connected;
@@ -677,29 +810,63 @@ class AprilaireSocket extends EventEmitter {
             this.disconnect();
 
         this._connected = false;
+        this.receiveBuffer = Buffer.alloc(0);
         this.client = new net.Socket();
 
         this.client.on("close", (hadError: boolean) => {
             console.debug(self.format(`close`), hadError);
 
             self._connected = false;
+            self.receiveBuffer = Buffer.alloc(0);
             self.emit('disconnected');
         });
 
         this.client.on("data", (data: Buffer) => {
             try {
                 console.group(self.format(`received data, data=${data.toString("base64")}`));
-                self.parseResponse(data).forEach(element => {
-                    try {
-                        const payload = element.toObject();
+                // Append to sticky buffer, extract complete frames, keep remainder.
+                self.receiveBuffer = Buffer.concat([self.receiveBuffer, data]);
+                const { frames, remainder, crcFailures } = reassembleFrames(self.receiveBuffer);
+                self.receiveBuffer = remainder;
 
+                if (crcFailures > 0) {
+                    console.error(self.format(
+                        `CRC failure: dropped ${crcFailures} frame(s); continuing with remainder length=${remainder.length}`
+                    ));
+                }
+
+                for (const frame of frames) {
+                    try {
+                        if (frame.action === Action.NAck) {
+                            console.debug(self.format(
+                                `received NACK, sequence=${frame.sequence}, status=0x${frame.attribute.toString(16)}`
+                            ));
+                        } else {
+                            console.debug(self.format(
+                                `received data part, sequence=${frame.sequence}, action=${Action[frame.action]}, functional_domain=${FunctionalDomain[frame.domain]}, attribute=${frame.attribute}`
+                            ));
+                        }
+
+                        const element = new AprilaireResponsePayload(
+                            self.host,
+                            self.port,
+                            frame.revision,
+                            frame.sequence,
+                            frame.length,
+                            frame.action,
+                            frame.domain,
+                            frame.attribute,
+                            frame.payload,
+                            frame.crc
+                        );
+                        const payload = element.toObject();
                         if (payload)
                             self.emit('response', payload);
                     }
                     catch (err) {
                         console.error(err.message);
                     }
-                });
+                }
             } finally {
                 console.groupEnd();
             }
@@ -725,6 +892,7 @@ class AprilaireSocket extends EventEmitter {
     }
 
     disconnect() {
+        this.receiveBuffer = Buffer.alloc(0);
         this.client.destroy();
         this.client = undefined;
     }
@@ -740,82 +908,6 @@ class AprilaireSocket extends EventEmitter {
 
     sendRequest(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
         this.sendCommand(action, domain, attribute);
-    }
-
-    private parseResponse (data: Buffer) : AprilaireResponsePayload[] {
-        let response: AprilaireResponsePayload[] = [];
-    
-        let workingData = data;
-        let count = 0;
-        let position = 0;
-        while(true) {
-            if (workingData.length === 0 || count > 50)
-                break;
-
-            // Need at least REV+SEQ+CNT (4 bytes) to read length
-            if (workingData.length < 4)
-                break;
-
-            const { revision, sequence, length, action, domain, attribute } = this.decodeHeader(workingData);
-
-            // Full frame: 4-byte header prefix + payload (length) + CRC
-            if (workingData.length < 4 + length + 1)
-                break;
-
-            // NACK CNT=2 → [Action][StatusCode], no domain/attribute.
-            // Byte layout: REV SEQ CNT_H CNT_L ACTION STATUS CRC
-            if (action === Action.NAck) {
-                const statusCode = workingData.readUint8(5);
-                const crc = workingData[4 + length];
-                const crcCheck = generateCrc(workingData.subarray(0, 4 + length));
-
-                console.assert(crc === crcCheck, `failed: crc check, expecting ${crcCheck} received ${crc}`);
-                console.debug(this.format(`received NACK, position=${position}, sequence=${sequence}, status=0x${statusCode.toString(16)}, data=${workingData.toString("base64")}`));
-
-                response.push(new AprilaireResponsePayload(
-                    this.host, this.port, revision, sequence, length,
-                    action, FunctionalDomain.NAck, statusCode,
-                    Buffer.from([statusCode]), crc
-                ));
-
-                const nextStart = 4 + length + 1;
-                workingData = workingData.subarray(nextStart);
-                position = position + nextStart;
-                count++;
-                continue;
-            }
-
-            const payload = workingData.subarray(7, 4 + length);
-            const crc = workingData[4 + length];
-            const crcCheck = generateCrc(workingData.subarray(0, 4 + length));
-    
-            console.assert(crc === crcCheck, `failed: crc check, expecting ${crcCheck} received ${crc}`);
-            console.debug(this.format(`received data part, position=${position}, sequence=${sequence}, action=${Action[action]}, functional_domain=${FunctionalDomain[domain]}, attribute=${attribute}, data=${workingData.toString("base64")}`));
-        
-            response.push(new AprilaireResponsePayload(this.host, this.port, revision, sequence, length, action, domain, attribute, payload, crc));
-    
-            const nextStart = 4 + length + 1;
-            workingData = workingData.subarray(nextStart);
-        
-            position = position + nextStart;
-            count++;
-        }
-    
-        return response;
-    }
-    
-    private decodeHeader (data: Buffer) {
-        try {
-            const revision: number = data.readUint8(0);
-            const sequence: number = data.readUint8(1);
-            const length: number = data.readUint16BE(2);
-            const action: Action = data.readUint8(4);
-            const domain: FunctionalDomain = data.readUint8(5);
-            const attribute: number = data.readUint8(6);
-            return { revision, sequence, length, action, domain, attribute };
-        } catch {
-            return { revision: 1, sequence: 0, length: 0, action: Action.None, domain: FunctionalDomain.None, attribute: 0 };
-        }
     }
 
     private sendCommand(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup, data: Buffer = Buffer.alloc(0)) {
