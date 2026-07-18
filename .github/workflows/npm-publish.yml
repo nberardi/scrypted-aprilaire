@@ -1,14 +1,15 @@
-# Build, test, and publish on GitHub Release (or manual dispatch).
+# Build, test, and publish to GitHub Packages on release (or manual dispatch).
 #
-# Registries:
-#   1) npmjs.org  — package name `scrypted-aprilaire` (Scrypted plugin install path)
-#   2) GitHub Packages — `@nberardi/scrypted-aprilaire` (npm.pkg.github.com)
+# Registry: GitHub Packages (npm.pkg.github.com)
+#   Package name published as: @nberardi/scrypted-aprilaire
+#   Auth: GITHUB_TOKEN (packages:write) — no npmjs OTP or NPM_TOKEN secret.
 #
-# Secrets:
-#   NPM_TOKEN  — npmjs access token for user `nberardi` with publish rights to
-#                scrypted-aprilaire. Classic E404 on PUT almost always means the
-#                token is missing, expired, or for a different npm account.
-#   GITHUB_TOKEN is provided automatically for GitHub Packages (packages:write).
+# npmjs.org (scrypted-aprilaire) is published locally when needed:
+#   npm run prepublishOnly && npm publish --access=public --otp=<code>
+#
+# Install from GitHub Packages:
+#   .npmrc → @nberardi:registry=https://npm.pkg.github.com
+#   npm install @nberardi/scrypted-aprilaire
 
 name: npm publish
 
@@ -16,15 +17,6 @@ on:
   release:
     types: [created]
   workflow_dispatch:
-    inputs:
-      publish_npmjs:
-        description: Publish to registry.npmjs.org
-        type: boolean
-        default: true
-      publish_github:
-        description: Publish to GitHub Packages (npm.pkg.github.com)
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -34,7 +26,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # v5+ runs on Node 24 (v4 still targets Node 20 and triggers deprecation warnings).
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
@@ -57,34 +48,8 @@ jobs:
           ls -la dist/
           node -e "const p=require('./package.json'); console.log('version', p.version, 'name', p.name)"
 
-  publish-npmjs:
-    needs: build
-    if: github.event_name == 'release' || inputs.publish_npmjs
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org/
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Production webpack bundle
-        run: npm run prepublishOnly
-
-      - name: Publish to npmjs.org
-        run: npm publish --access=public
-        env:
-          # Prefer NPM_TOKEN; fall back to legacy secret name used by older runs.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.npm_token }}
-
   publish-github-packages:
     needs: build
-    if: github.event_name == 'release' || inputs.publish_github
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -106,8 +71,8 @@ jobs:
         run: npm run prepublishOnly
 
       # GitHub Packages requires a scoped package name (@owner/name).
-      # Keep package.json as scrypted-aprilaire for npmjs/Scrypted; only rename
-      # for this job so the same release is available on both registries.
+      # Keep package.json as scrypted-aprilaire for local npmjs publishes; only
+      # rename for this job so Scrypted/npmjs naming stays unchanged in the repo.
       - name: Scope package name for GitHub Packages
         run: |
           npm pkg set name=@nberardi/scrypted-aprilaire
