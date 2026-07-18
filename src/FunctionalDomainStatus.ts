@@ -18,45 +18,140 @@ import { BasePayloadRequest } from "./BasePayloadRequest";
 *
 */
 
+/** Guide §7.1 — COS subscription vector length (bytes 0–28). */
+export const COS_SUBSCRIPTION_BYTE_COUNT = 29;
+
+/**
+ * Named indices into the Status/COS 29-byte subscription vector (§7.1 / §J.1).
+ * Values are 0 = not subscribed, 1 = subscribed.
+ */
+export enum CosSubscriptionIndex {
+    InstallerThermostatSettings = 0,
+    ContractorInformation = 1,
+    AirCleaningInstallerVariable = 2,
+    HumidityControlInstallerSettings = 3,
+    FreshAirInstallerSettings = 4,
+    ThermostatSetpointAndModeSettings = 5,
+    DehumidificationSetpoint = 6,
+    HumidificationSetpoint = 7,
+    FreshAirSetting = 8,
+    AirCleaningSettings = 9,
+    ThermostatIAQAvailable = 10,
+    ScheduleSettings = 11,
+    AwaySettings = 12,
+    ScheduleDay = 13,
+    ScheduleHold = 14,
+    HeatBlast = 15,
+    ServiceRemindersStatus = 16,
+    AlertsStatus = 17,
+    AlertsSettings = 18,
+    BacklightSettings = 19,
+    ThermostatLocationAndName = 20,
+    Reserved = 21,
+    ControllingSensorValues = 22,
+    OverTheAirOdtUpdateTimeout = 23,
+    ThermostatStatus = 24,
+    IAQStatus = 25,
+    ModelAndRevision = 26,
+    SupportModule = 27,
+    Lockouts = 28,
+}
+
+/** Sparse overrides for {@link CosRequest} (named index → enabled). */
+export type CosSubscriptionOverrides = Partial<Record<CosSubscriptionIndex, boolean>>;
+
+/**
+ * Default COS subscription vector used by the plugin at connect.
+ * Must stay aligned with P1 runtime needs (installer, setpoints, hold, sensors, status).
+ */
+export function defaultCosSubscriptionFlags(): number[] {
+    const flags = new Array<number>(COS_SUBSCRIPTION_BYTE_COUNT).fill(0);
+    flags[CosSubscriptionIndex.InstallerThermostatSettings] = 1;
+    flags[CosSubscriptionIndex.ThermostatSetpointAndModeSettings] = 1;
+    flags[CosSubscriptionIndex.DehumidificationSetpoint] = 1;
+    flags[CosSubscriptionIndex.HumidificationSetpoint] = 1;
+    flags[CosSubscriptionIndex.FreshAirSetting] = 1;
+    flags[CosSubscriptionIndex.AirCleaningSettings] = 1;
+    flags[CosSubscriptionIndex.ThermostatIAQAvailable] = 1;
+    flags[CosSubscriptionIndex.AwaySettings] = 1;
+    flags[CosSubscriptionIndex.ScheduleHold] = 1;
+    flags[CosSubscriptionIndex.HeatBlast] = 1;
+    flags[CosSubscriptionIndex.ServiceRemindersStatus] = 1;
+    flags[CosSubscriptionIndex.AlertsStatus] = 1;
+    flags[CosSubscriptionIndex.BacklightSettings] = 1;
+    flags[CosSubscriptionIndex.ThermostatLocationAndName] = 1;
+    flags[CosSubscriptionIndex.ControllingSensorValues] = 1;
+    flags[CosSubscriptionIndex.OverTheAirOdtUpdateTimeout] = 1;
+    flags[CosSubscriptionIndex.ThermostatStatus] = 1;
+    flags[CosSubscriptionIndex.IAQStatus] = 1;
+    flags[CosSubscriptionIndex.ModelAndRevision] = 1;
+    return flags;
+}
+
+/**
+ * Write Status/COS — desired subscription map (§7.1 / §J.1).
+ * Optional overrides flip individual bits without changing the rest of the default vector.
+ */
 export class CosRequest extends BasePayloadRequest {
-    constructor() {
+    /** 29 flags, each 0 or 1 */
+    flags: number[];
+
+    constructor(overrides?: CosSubscriptionOverrides) {
         super(FunctionalDomain.Status, FunctionalDomainStatus.COS);
+        this.flags = defaultCosSubscriptionFlags();
+        if (overrides) {
+            for (const [key, enabled] of Object.entries(overrides)) {
+                const index = Number(key) as CosSubscriptionIndex;
+                if (Number.isInteger(index) && index >= 0 && index < COS_SUBSCRIPTION_BYTE_COUNT && enabled !== undefined) {
+                    this.flags[index] = enabled ? 1 : 0;
+                }
+            }
+        }
     }
 
     toBuffer(): Buffer {
-        const payload = Buffer.from(new Uint8Array([
-            1,  // Installer Thermostat Settings
-            0,  // Contractor Information
-            0,  // Air Cleaning Installer Variable
-            0,  // Humidity Control Installer Settings
-            0,  // Fresh Air Installer Settings
-            1,  // Thermostat Setpoint & Mode Settings
-            1,  // Dehumidification Setpoint
-            1,  // Humidification Setpoint
-            1,  // Fresh Air Setting
-            1,  // Air Cleaning Settings
-            1,  // Thermostat IAQ Available
-            0,  // Schedule Settings
-            1,  // Away Settings
-            0,  // Schedule Day
-            1,  // Schedule Hold
-            1,  // Heat Blast
-            1,  // Service Reminders Status
-            1,  // Alerts Status
-            0,  // Alerts Settings
-            1,  // Backlight Settings
-            1,  // Thermostat Location & Name
-            0,  // Reserved
-            1,  // Controlling Sensor Values
-            1,  // Over the air ODT update timeout
-            1,  // Thermostat Status
-            1,  // IAQ Status
-            1,  // Model & Revision
-            0,  // Support Module
-            0,  // Lockouts
-        ]));
-        payload.writeUInt8(1);
+        const payload = Buffer.alloc(COS_SUBSCRIPTION_BYTE_COUNT);
+        for (let i = 0; i < COS_SUBSCRIPTION_BYTE_COUNT; i++) {
+            payload.writeUint8(this.flags[i] ? 1 : 0, i);
+        }
         return payload;
+    }
+}
+
+/**
+ * Read Status/COS — empty payload; device replies with current 29-byte subscription vector.
+ */
+export class CosReadRequest extends BasePayloadRequest {
+    constructor() {
+        super(FunctionalDomain.Status, FunctionalDomainStatus.COS);
+    }
+}
+
+/**
+ * ReadResponse for Status/COS — current subscription vector (§7.1).
+ */
+export class CosResponse extends BasePayloadResponse {
+    /** 29 subscription flags (true = subscribed). */
+    subscriptions: boolean[];
+
+    constructor(payload: Buffer) {
+        super(payload, FunctionalDomain.Status, FunctionalDomainStatus.COS);
+
+        this.subscriptions = [];
+        for (let i = 0; i < COS_SUBSCRIPTION_BYTE_COUNT; i++) {
+            this.subscriptions.push(i < payload.length ? payload.readUint8(i) === 1 : false);
+        }
+    }
+
+    isEnabled(index: CosSubscriptionIndex | number): boolean {
+        if (index < 0 || index >= this.subscriptions.length)
+            return false;
+        return this.subscriptions[index];
+    }
+
+    /** Copy of flags as 0/1 numbers (length 29). */
+    toFlags(): number[] {
+        return this.subscriptions.map((v) => (v ? 1 : 0));
     }
 }
 

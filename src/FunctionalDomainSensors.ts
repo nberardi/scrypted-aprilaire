@@ -16,6 +16,30 @@ import { BasePayloadRequest } from "./BasePayloadRequest";
 *
 */
 
+/**
+ * Read Sensors/Sensor Values (§5.1) — empty payload; device replies with 16 status/value bytes.
+ * Guide: attribute is COS=No — use explicit ReadRequest, not COS subscription.
+ */
+export class SensorValuesRequest extends BasePayloadRequest {
+    constructor() {
+        super(FunctionalDomain.Sensors, FunctionalDomainSensors.SensorValues);
+    }
+}
+
+/**
+ * Sensors §5.1 full sensor array (16 data bytes): pairs of status + value.
+ *
+ * | Offset | Field |
+ * |--------|--------|
+ * | 0–1 | Built-in indoor temperature |
+ * | 2–3 | Wired remote indoor temperature |
+ * | 4–5 | Wired outdoor temperature |
+ * | 6–7 | Built-in indoor humidity |
+ * | 8–9 | Return air temperature (RAT) |
+ * | 10–11 | Supply/leaving air temperature (LAT) |
+ * | 12–13 | Wireless outdoor temperature |
+ * | 14–15 | Wireless outdoor humidity |
+ */
 export class SensorValuesResponse extends BasePayloadResponse {
     indoorTemperatureStatus: TemperatureSensorStatus;
     indoorTemperature: number;

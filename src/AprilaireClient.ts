@@ -8,7 +8,7 @@ import { ThermostatAndIAQAvailableResponse, FreshAirSettingsResponse, AirCleanin
 import { MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse } from "./FunctionalDomainIdentification";
 import { ControllingSensorsStatusAndValueResponse, SensorValuesResponse, WrittenOutdoorTemperatureValueResponse } from "./FunctionalDomainSensors";
 import { ThermostatInstallerSettingsResponse, ScaleResponse, DateAndTimeRequest, DateAndTimeResponse } from "./FunctionalDomainSetup";
-import { CosRequest, IAQStatusResponse, ThermostatStatusResponse, SyncResponse, ThermostatErrorResponse, OfflineResponse } from "./FunctionalDomainStatus";
+import { CosRequest, CosReadRequest, CosResponse, IAQStatusResponse, ThermostatStatusResponse, SyncResponse, ThermostatErrorResponse, OfflineResponse } from "./FunctionalDomainStatus";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse, NackResponse } from "./BasePayloadResponse";
 import { AwaySettingsResponse, HeatBlastResponse, ScheduleHoldResponse } from "./FunctionalDomainScheduling";
@@ -64,7 +64,9 @@ export class AprilaireClient extends EventEmitter {
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.RevisionAndModel);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
+            // Guide §J.1 / §7.1: write desired COS map, then optionally read back for diagnostics.
             self.client.writeObjectRequest(new CosRequest());
+            self.client.readObjectRequest(new CosReadRequest());
             // Guide §J.3 / Setup §1.4: automation owns the thermostat clock (local wall time).
             self.syncDateAndTime();
             self.startDateTimeResync();
@@ -792,6 +794,8 @@ export class AprilaireResponsePayload {
                 break;
             case FunctionalDomain.Status: 
                 switch(this.attribute) {
+                    case FunctionalDomainStatus.COS:
+                        return new CosResponse(this.payload);
                     case FunctionalDomainStatus.IAQStatus:
                         return new IAQStatusResponse(this.payload);
                     case FunctionalDomainStatus.ThermostatStatus:

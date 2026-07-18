@@ -18,9 +18,9 @@ import {
 } from "../src/AprilaireClient";
 import { NackResponse } from "../src/BasePayloadResponse";
 import { ThermostatSetpointAndModeSettingsResponse } from "../src/FunctionalDomainControl";
-import { ControllingSensorsStatusAndValueResponse } from "../src/FunctionalDomainSensors";
+import { ControllingSensorsStatusAndValueResponse, SensorValuesResponse } from "../src/FunctionalDomainSensors";
 import { ScheduleHoldResponse } from "../src/FunctionalDomainScheduling";
-import { ThermostatErrorResponse } from "../src/FunctionalDomainStatus";
+import { CosResponse, ThermostatErrorResponse } from "../src/FunctionalDomainStatus";
 import { MacAddressResponse } from "../src/FunctionalDomainIdentification";
 import { DateAndTimeResponse } from "../src/FunctionalDomainSetup";
 import {
@@ -99,6 +99,52 @@ describe("Packet frame & response factory ", () => {
             const obj = frame.toObject();
             expect(obj).toBeInstanceOf(ControllingSensorsStatusAndValueResponse);
             expect((obj as ControllingSensorsStatusAndValueResponse).indoorTemperature).toBe(21.5);
+        });
+
+        it("parses Status/COS ReadResponse into CosResponse", () => {
+            const data = Buffer.alloc(29, 0);
+            data[0] = 1;
+            data[22] = 1;
+            const frame = new AprilaireResponsePayload(
+                "127.0.0.1",
+                8000,
+                1,
+                0,
+                3 + data.length,
+                Action.ReadResponse,
+                FunctionalDomain.Status,
+                FunctionalDomainStatus.COS,
+                data,
+                0
+            );
+            const obj = frame.toObject();
+            expect(obj).toBeInstanceOf(CosResponse);
+            expect((obj as CosResponse).isEnabled(0)).toBe(true);
+            expect((obj as CosResponse).isEnabled(22)).toBe(true);
+        });
+
+        it("parses Sensors/SensorValues ReadResponse into SensorValuesResponse", () => {
+            const data = Buffer.alloc(16, 0);
+            data[0] = 0;
+            data[1] = guideEncodeTemperature(22);
+            data[8] = 0;
+            data[9] = guideEncodeTemperature(19);
+            const frame = new AprilaireResponsePayload(
+                "127.0.0.1",
+                8000,
+                1,
+                0,
+                3 + data.length,
+                Action.ReadResponse,
+                FunctionalDomain.Sensors,
+                FunctionalDomainSensors.SensorValues,
+                data,
+                0
+            );
+            const obj = frame.toObject();
+            expect(obj).toBeInstanceOf(SensorValuesResponse);
+            expect((obj as SensorValuesResponse).indoorTemperature).toBe(22);
+            expect((obj as SensorValuesResponse).returningAirTemperature).toBe(19);
         });
 
         it("parses Identification/MAC ReadResponse", () => {

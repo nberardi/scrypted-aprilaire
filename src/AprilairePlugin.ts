@@ -3,17 +3,37 @@ import { DeviceProvider, ScryptedDeviceBase, Setting, Settings } from '@scrypted
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse } from "./BasePayloadResponse";
-import { ControllingSensorsStatusAndValueRequest, ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, WrittenOutdoorTemperatureValueRequest } from './FunctionalDomainSensors';
+import {
+    ControllingSensorsStatusAndValueRequest,
+    ControllingSensorsStatusAndValueResponse,
+    HumiditySensorStatus,
+    SensorValuesRequest,
+    SensorValuesResponse,
+    TemperatureSensorStatus,
+    WrittenOutdoorTemperatureValueRequest,
+} from './FunctionalDomainSensors';
 import { ThermostatInstallerSettingsRequest, ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
 import { HeatBlastResponse, HoldType, ScheduleHoldRequest, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 import { SyncRequest } from './FunctionalDomainStatus';
 import { setInterval } from 'node:timers';
 import { AprilaireOutdoorThermometer } from './AprilaireOutdoorThermometer';
+import { AprilaireAuxThermometer } from './AprilaireAuxThermometer';
 import { AprilaireThermostat } from './AprilaireThermostat';
 import { AprilaireDehumidifier } from './AprilaireDehumidifier';
 import { AprilaireHumidifier } from './AprilaireHumidifier';
 
 const { deviceManager, systemManager } = sdk;
+
+/** Stable nativeId suffixes (internal; do not rename — would orphan devices). */
+const NATIVE_OUTDOOR = "|OutdoorTemperatureSensor";
+const NATIVE_RAT = "|RAT";
+const NATIVE_LAT = "|LAT";
+
+/** User-facing name suffixes appended to the thermostat name. */
+const DISPLAY_OUTDOOR = " Outdoor Temperature";
+const DISPLAY_RETURN_AIR = " Return Air Temperature";
+/** LAT in the guide — supply air leaving the equipment (clearer for homeowners). */
+const DISPLAY_SUPPLY_AIR = " Supply Air Temperature";
 
 export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvider, DeviceCreator, Settings {
     storageSettings = new StorageSettings(this, {
@@ -44,6 +64,8 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     clients = new Map<string, AprilaireClient>();
     thermostats = new Map<string, AprilaireThermostat | AprilaireHumidifier | AprilaireDehumidifier>();
     outdoorSensors = new Map<string, AprilaireOutdoorThermometer>();
+    /** Keyed by full nativeId (`mac|RAT`, `mac|LAT`). */
+    auxSensors = new Map<string, AprilaireAuxThermometer>();
     automatedOutdoorSensors: string[] = [];
     automatedOutdoorSensorsTimer: NodeJS.Timeout;
 
@@ -76,8 +98,9 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             if (this.automatedOutdoorSensors.indexOf(client.mac) >= 0)
                 return;
 
-            let request = new ControllingSensorsStatusAndValueRequest();
-            client.read(request);
+            // Controlling sensors for multi-stat ODT sync; full Sensor Values for aux temps/wireless.
+            client.read(new ControllingSensorsStatusAndValueRequest());
+            client.read(new SensorValuesRequest());
         });
     }
 
@@ -108,22 +131,79 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             }
         }
 
-        else if (response instanceof ControllingSensorsStatusAndValueResponse && this.storageSettings.values.syncOutdoorSensor) {
-            if (response.outdoorTemperatureStatus !== TemperatureSensorStatus.NoError)
-                return;
+        else if (response instanceof ControllingSensorsStatusAndValueResponse) {
+            void this.handleControllingSensors(response, responseClient);
+        }
 
-            if (this.automatedOutdoorSensors.indexOf(responseClient.mac) === -1)
-                this.setOutdoorTemperature(response, responseClient);
+        else if (response instanceof SensorValuesResponse) {
+            void this.handleSensorValues(response, responseClient);
+        }
+    }
 
-            this.automatedOutdoorSensors
-                .filter(mac => mac !== responseClient.mac)
-                .forEach(mac => {
-                    let request = new WrittenOutdoorTemperatureValueRequest();
-                    request.temperature = response.outdoorTemperature;
+    private async handleControllingSensors(
+        response: ControllingSensorsStatusAndValueResponse,
+        responseClient: AprilaireClient
+    ): Promise<void> {
+        if (response.outdoorTemperatureStatus === TemperatureSensorStatus.NoError) {
+            await this.updateOutdoorSensor(
+                responseClient,
+                response.outdoorTemperature,
+                response.outdoorHumidityStatus === HumiditySensorStatus.NoError
+                    ? response.outdoorHumidity
+                    : undefined
+            );
 
-                    const client = this.clients.get(mac);
-                    client.write(request);
-            });
+            if (this.storageSettings.values.syncOutdoorSensor) {
+                this.automatedOutdoorSensors
+                    .filter((mac) => mac !== responseClient.mac)
+                    .forEach((mac) => {
+                        const request = new WrittenOutdoorTemperatureValueRequest();
+                        request.temperature = response.outdoorTemperature;
+                        const client = this.clients.get(mac);
+                        client?.write(request);
+                    });
+            }
+        }
+    }
+
+    private async handleSensorValues(
+        response: SensorValuesResponse,
+        responseClient: AprilaireClient
+    ): Promise<void> {
+        // Outdoor: prefer wired outdoor, fall back to wireless outdoor.
+        let outdoorTemp: number | undefined;
+        let outdoorHumidity: number | undefined;
+
+        if (response.outdoorTemperatureStatus === TemperatureSensorStatus.NoError) {
+            outdoorTemp = response.outdoorTemperature;
+        } else if (response.outdoorWirelessTemperatureStatus === TemperatureSensorStatus.NoError) {
+            outdoorTemp = response.outdoorWirelessTemperature;
+        }
+
+        if (response.outdoorHumidityStatus === HumiditySensorStatus.NoError) {
+            outdoorHumidity = response.outdoorHumidity;
+        }
+
+        if (outdoorTemp !== undefined) {
+            await this.updateOutdoorSensor(responseClient, outdoorTemp, outdoorHumidity);
+        }
+
+        if (response.returningAirTemperatureStatus === TemperatureSensorStatus.NoError) {
+            await this.updateAuxSensor(
+                responseClient,
+                NATIVE_RAT,
+                DISPLAY_RETURN_AIR,
+                response.returningAirTemperature
+            );
+        }
+
+        if (response.leavingAirTemperatureStatus === TemperatureSensorStatus.NoError) {
+            await this.updateAuxSensor(
+                responseClient,
+                NATIVE_LAT,
+                DISPLAY_SUPPLY_AIR,
+                response.leavingAirTemperature
+            );
         }
     }
 
@@ -133,11 +213,12 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
 
         const d: Device = {
             providerNativeId: this.nativeId,
-            name: responseClient.name + " Outdoor Temperature Sensor",
+            name: responseClient.name + DISPLAY_OUTDOOR,
             type: ScryptedDeviceType.Sensor,
-            nativeId: responseClient.mac + "|OutdoorTemperatureSensor",
+            nativeId: responseClient.mac + NATIVE_OUTDOOR,
             interfaces: [
-                ScryptedInterface.Thermometer
+                ScryptedInterface.Thermometer,
+                ScryptedInterface.HumiditySensor,
             ],
             info: {
                 model: responseClient.model,
@@ -156,12 +237,53 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         return o;
     }
 
-    async setOutdoorTemperature(response: ControllingSensorsStatusAndValueResponse, responseClient: AprilaireClient) : Promise<void> {
-        if (response.outdoorTemperatureStatus === TemperatureSensorStatus.NoError && response.outdoorTemperature !== undefined) {
-            const outdoorSensor = await this.getOrAddOutdoorSensor(responseClient);
-            outdoorSensor.temperature = response.outdoorTemperature;
-            outdoorSensor.setTemperatureUnit(TemperatureUnit.C);
+    private async updateOutdoorSensor(
+        responseClient: AprilaireClient,
+        temperature: number,
+        humidity?: number
+    ): Promise<void> {
+        const outdoorSensor = await this.getOrAddOutdoorSensor(responseClient);
+        outdoorSensor.temperature = temperature;
+        outdoorSensor.setTemperatureUnit(TemperatureUnit.C);
+        if (humidity !== undefined) {
+            outdoorSensor.humidity = humidity;
         }
+    }
+
+    private async updateAuxSensor(
+        responseClient: AprilaireClient,
+        suffix: typeof NATIVE_RAT | typeof NATIVE_LAT,
+        nameSuffix: string,
+        temperature: number
+    ): Promise<void> {
+        const nativeId = responseClient.mac + suffix;
+        let sensor = this.auxSensors.get(nativeId);
+        if (!sensor) {
+            const d: Device = {
+                providerNativeId: this.nativeId,
+                name: responseClient.name + nameSuffix,
+                type: ScryptedDeviceType.Sensor,
+                nativeId,
+                interfaces: [ScryptedInterface.Thermometer],
+                info: {
+                    model: responseClient.model,
+                    manufacturer: "Aprilaire",
+                    serialNumber: responseClient.mac,
+                    firmware: responseClient.firmware,
+                    version: responseClient.hardware,
+                },
+            };
+            await deviceManager.onDeviceDiscovered(d);
+            sensor = new AprilaireAuxThermometer(nativeId);
+            this.auxSensors.set(nativeId, sensor);
+        }
+        sensor.temperature = temperature;
+        sensor.setTemperatureUnit(TemperatureUnit.C);
+    }
+
+    /** @deprecated use updateOutdoorSensor — kept for call-site compatibility */
+    async setOutdoorTemperature(response: ControllingSensorsStatusAndValueResponse, responseClient: AprilaireClient): Promise<void> {
+        await this.handleControllingSensors(response, responseClient);
     }
 
     getSettings(): Promise<Setting[]> {
@@ -175,9 +297,18 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         if (this.thermostats.has(nativeId))
             return this.thermostats.get(nativeId);
 
-        if (nativeId.endsWith("|OutdoorTemperatureSensor")) {
-            const o = new AprilaireOutdoorThermometer(nativeId);
-            return o;
+        if (nativeId.endsWith(NATIVE_OUTDOOR)) {
+            if (this.outdoorSensors.has(nativeId.replace(NATIVE_OUTDOOR, "")))
+                return this.outdoorSensors.get(nativeId.replace(NATIVE_OUTDOOR, ""));
+            return new AprilaireOutdoorThermometer(nativeId);
+        }
+
+        if (nativeId.endsWith(NATIVE_RAT) || nativeId.endsWith(NATIVE_LAT)) {
+            if (this.auxSensors.has(nativeId))
+                return this.auxSensors.get(nativeId);
+            const aux = new AprilaireAuxThermometer(nativeId);
+            this.auxSensors.set(nativeId, aux);
+            return aux;
         }
 
         let s = deviceManager.getDeviceStorage(nativeId);
@@ -300,6 +431,8 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
 
                 // Explicit Setup/1 read for deadband / Away / Heat Blast gates (also COS-subscribed).
                 client.read(new ThermostatInstallerSettingsRequest());
+                // Full §5.1 sensor array (COS=No — must ReadRequest; return/supply air, wireless outdoor).
+                client.read(new SensorValuesRequest());
                 // Sync dumps current state for all COS-subscribed attributes (includes Setup/1).
                 client.write(new SyncRequest());
 

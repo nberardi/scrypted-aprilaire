@@ -9,6 +9,7 @@ import {
     ControllingSensorsStatusAndValueResponse,
     HumiditySensorStatus,
     OurdoorSensorStatus,
+    SensorValuesRequest,
     SensorValuesResponse,
     TemperatureSensorStatus,
     WrittenOutdoorTemperatureValueRequest,
@@ -26,37 +27,73 @@ import {
 } from "./helpers/guide-reference";
 
 describe("Sensors domainx", () => {
-    describe(" Sensor Values & Status", () => {
-        it("parses 16-byte status/value pairs", () => {
+    describe(" Sensor Values & Status (§5.1)", () => {
+        it("SensorValuesRequest is empty-body Sensors attribute 0x01", () => {
+            const req = new SensorValuesRequest();
+            expect(req.domain).toBe(GuideDomain.Sensors);
+            expect(req.attribute).toBe(GuideAttribute.Sensors.SensorValues);
+            expect(req.attribute).toBe(FunctionalDomainSensors.SensorValues);
+            expect(req.toBuffer()).toEqual(Buffer.alloc(0));
+        });
+
+        it("parses full 16-byte status/value pairs including RAT/LAT/wireless", () => {
             const payload = Buffer.alloc(16);
             // indoor temp OK 22.0
             payload[0] = TemperatureSensorStatus.NoError;
             payload[1] = guideEncodeTemperature(22);
-            // wired remote not installed
-            payload[2] = TemperatureSensorStatus.NotInstalled;
-            payload[3] = 0;
+            // wired remote OK 21.0
+            payload[2] = TemperatureSensorStatus.NoError;
+            payload[3] = guideEncodeTemperature(21);
             // outdoor OK -5.0
             payload[4] = TemperatureSensorStatus.NoError;
             payload[5] = guideEncodeTemperature(-5);
             // indoor humidity 45%
             payload[6] = HumiditySensorStatus.NoError;
             payload[7] = 45;
-            // RAT not installed
-            payload[8] = TemperatureSensorStatus.NotInstalled;
-            // LAT not installed
-            payload[10] = TemperatureSensorStatus.NotInstalled;
-            // wireless outdoor not installed
-            payload[12] = TemperatureSensorStatus.NotInstalled;
-            // outdoor humidity not installed
-            payload[14] = HumiditySensorStatus.NotInstalled;
+            // RAT OK 18.5
+            payload[8] = TemperatureSensorStatus.NoError;
+            payload[9] = guideEncodeTemperature(18.5);
+            // LAT OK 30.0
+            payload[10] = TemperatureSensorStatus.NoError;
+            payload[11] = guideEncodeTemperature(30);
+            // wireless outdoor OK -8.5
+            payload[12] = TemperatureSensorStatus.NoError;
+            payload[13] = guideEncodeTemperature(-8.5);
+            // outdoor humidity 55%
+            payload[14] = HumiditySensorStatus.NoError;
+            payload[15] = 55;
 
             const res = new SensorValuesResponse(payload);
             expect(res.domain).toBe(FunctionalDomain.Sensors);
             expect(res.attribute).toBe(GuideAttribute.Sensors.SensorValues);
             expect(res.indoorTemperature).toBe(22);
+            expect(res.indoorWiredRemoteTemperature).toBe(21);
             expect(res.outdoorTemperature).toBe(-5);
             expect(res.indoorHumidity).toBe(45);
+            expect(res.returningAirTemperature).toBe(18.5);
+            expect(res.returningAirTemperatureStatus).toBe(TemperatureSensorStatus.NoError);
+            expect(res.leavingAirTemperature).toBe(30);
+            expect(res.leavingAirTemperatureStatus).toBe(TemperatureSensorStatus.NoError);
+            expect(res.outdoorWirelessTemperature).toBe(-8.5);
+            expect(res.outdoorWirelessTemperatureStatus).toBe(TemperatureSensorStatus.NoError);
+            expect(res.outdoorHumidity).toBe(55);
+            expect(res.outdoorHumidityStatus).toBe(HumiditySensorStatus.NoError);
             expect(res.outdoorTemperatureStatus).toBe(TemperatureSensorStatus.NoError);
+        });
+
+        it("independent offsets: RAT/LAT not coupled to indoor outdoor", () => {
+            const payload = Buffer.alloc(16, 0);
+            payload[0] = TemperatureSensorStatus.NotInstalled;
+            payload[4] = TemperatureSensorStatus.NotInstalled;
+            payload[8] = TemperatureSensorStatus.NoError;
+            payload[9] = guideEncodeTemperature(19);
+            payload[10] = TemperatureSensorStatus.NoError;
+            payload[11] = guideEncodeTemperature(28.5);
+            const res = new SensorValuesResponse(payload);
+            expect(res.returningAirTemperature).toBe(19);
+            expect(res.leavingAirTemperature).toBe(28.5);
+            expect(res.indoorTemperatureStatus).toBe(TemperatureSensorStatus.NotInstalled);
+            expect(res.outdoorTemperatureStatus).toBe(TemperatureSensorStatus.NotInstalled);
         });
 
         it("maps temperature sensor status codes per protocol", () => {

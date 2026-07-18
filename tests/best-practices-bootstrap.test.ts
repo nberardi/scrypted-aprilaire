@@ -4,7 +4,7 @@
  * (P1 bootstrap) can be validated as implementation lands.
  */
 import { describe, expect, it } from "vitest";
-import { CosRequest, SyncRequest } from "../src/FunctionalDomainStatus";
+import { CosReadRequest, CosRequest, SyncRequest } from "../src/FunctionalDomainStatus";
 import {
     ControllingSensorsStatusAndValueRequest,
 } from "../src/FunctionalDomainSensors";
@@ -70,6 +70,13 @@ describe("Best practices bootstrap checklist", () => {
         const cos = new CosRequest();
         expect(cos.attribute).toBe(FunctionalDomainStatus.COS);
         expect(cos.toBuffer().length).toBe(29);
+    });
+
+    it("COS read request is available for §7.1 read-then-write management", () => {
+        const read = new CosReadRequest();
+        expect(read.domain).toBe(FunctionalDomain.Status);
+        expect(read.attribute).toBe(FunctionalDomainStatus.COS);
+        expect(read.toBuffer().length).toBe(0);
     });
 
     it("Control/1 and Sensors/2 request types exist for explicit reads", () => {

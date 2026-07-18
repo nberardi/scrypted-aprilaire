@@ -6,8 +6,13 @@
 import { describe, expect, it } from "vitest";
 import {
     AirCleaningStatus,
+    COS_SUBSCRIPTION_BYTE_COUNT as PROD_COS_COUNT,
+    CosReadRequest,
     CosRequest,
+    CosResponse,
+    CosSubscriptionIndex,
     CoolingStatus,
+    defaultCosSubscriptionFlags,
     DehumidificationStatus,
     FanStatus,
     HeatingStatus,
@@ -44,6 +49,7 @@ describe("Status domainx", () => {
         it("writes a 29-byte subscription vector (protocolbytes 0–28)", () => {
             const buf = new CosRequest().toBuffer();
             expect(buf.length).toBe(COS_SUBSCRIPTION_BYTE_COUNT);
+            expect(buf.length).toBe(PROD_COS_COUNT);
         });
 
         it("enables core runtime subscriptions used by best practices", () => {
@@ -68,6 +74,68 @@ describe("Status domainx", () => {
             for (let i = 0; i < buf.length; i++) {
                 expect([0, 1]).toContain(buf[i]);
             }
+        });
+
+        it("defaultCosSubscriptionFlags matches default CosRequest wire vector", () => {
+            expect(new CosRequest().toBuffer()).toEqual(
+                Buffer.from(defaultCosSubscriptionFlags())
+            );
+        });
+
+        it("CosRequest overrides flip only the intended indices", () => {
+            const baseline = new CosRequest().toBuffer();
+            const req = new CosRequest({
+                [CosSubscriptionIndex.ScheduleSettings]: true,
+                [CosSubscriptionIndex.SupportModule]: true,
+                [CosSubscriptionIndex.HeatBlast]: false,
+            });
+            const buf = req.toBuffer();
+            expect(buf.length).toBe(29);
+            expect(buf[CosSubscriptionIndex.ScheduleSettings]).toBe(1);
+            expect(buf[CosSubscriptionIndex.SupportModule]).toBe(1);
+            expect(buf[CosSubscriptionIndex.HeatBlast]).toBe(0);
+            // Unrelated indices unchanged
+            expect(buf[CosSubscriptionIndex.InstallerThermostatSettings]).toBe(
+                baseline[CosSubscriptionIndex.InstallerThermostatSettings]
+            );
+            expect(buf[CosSubscriptionIndex.ControllingSensorValues]).toBe(
+                baseline[CosSubscriptionIndex.ControllingSensorValues]
+            );
+            expect(buf[CosSubscriptionIndex.ScheduleHold]).toBe(
+                baseline[CosSubscriptionIndex.ScheduleHold]
+            );
+        });
+
+        it("CosReadRequest is empty-body Status/COS read", () => {
+            const req = new CosReadRequest();
+            expect(req.domain).toBe(FunctionalDomain.Status);
+            expect(req.attribute).toBe(FunctionalDomainStatus.COS);
+            expect(req.toBuffer()).toEqual(Buffer.alloc(0));
+        });
+
+        it("CosResponse parses a 29-byte subscription vector", () => {
+            const wire = Buffer.alloc(29, 0);
+            wire[0] = 1;
+            wire[22] = 1;
+            wire[27] = 1;
+            const res = new CosResponse(wire);
+            expect(res.attribute).toBe(GuideAttribute.Status.COS);
+            expect(res.subscriptions).toHaveLength(29);
+            expect(res.isEnabled(CosSubscriptionIndex.InstallerThermostatSettings)).toBe(true);
+            expect(res.isEnabled(CosSubscriptionIndex.ControllingSensorValues)).toBe(true);
+            expect(res.isEnabled(CosSubscriptionIndex.SupportModule)).toBe(true);
+            expect(res.isEnabled(CosSubscriptionIndex.Lockouts)).toBe(false);
+            expect(res.toFlags()[22]).toBe(1);
+            expect(res.toFlags()[28]).toBe(0);
+        });
+
+        it("CosResponse pads short payloads with false", () => {
+            const res = new CosResponse(Buffer.from([1, 0, 1]));
+            expect(res.subscriptions).toHaveLength(29);
+            expect(res.subscriptions[0]).toBe(true);
+            expect(res.subscriptions[2]).toBe(true);
+            expect(res.subscriptions[3]).toBe(false);
+            expect(res.subscriptions[28]).toBe(false);
         });
     });
 
