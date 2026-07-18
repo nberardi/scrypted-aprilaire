@@ -218,6 +218,28 @@ export const COS_SUBSCRIPTION_BYTE_COUNT = 29;
 export const SCHEDULE_HOLD_DATA_BYTE_COUNT = 10;
 
 /**
+ * protocol Setup §1.4 Date and Time data length (bytes 0–6).
+ * Second, Minute, Hour, Date(1–31), Day(0=Sun…6=Sat), Month(1–12), Year−2000.
+ */
+export const DATE_AND_TIME_DATA_BYTE_COUNT = 7;
+
+/**
+ * Encode Setup/DateAndTime payload from a Date using **local** wall-clock
+ * components (not UTC). Independent oracle for production DateAndTimeRequest.
+ */
+export function guideEncodeDateAndTime(localDate: Date): Buffer {
+    return Buffer.from([
+        localDate.getSeconds(),
+        localDate.getMinutes(),
+        localDate.getHours(),
+        localDate.getDate(),
+        localDate.getDay(), // 0=Sunday … 6=Saturday (matches guide)
+        localDate.getMonth() + 1, // 1–12
+        localDate.getFullYear() - 2000,
+    ]);
+}
+
+/**
  * protocolritten ODT: must be refreshed in less than 10 minutes.
  */
 export const WRITTEN_ODT_MAX_STALE_MS = 10 * 60 * 1000;

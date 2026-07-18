@@ -12,14 +12,18 @@ import {
     ThermostatSetpointAndModeSettingsRequest,
 } from "../src/FunctionalDomainControl";
 import {
+    DateAndTimeRequest,
+} from "../src/FunctionalDomainSetup";
+import {
     Action,
     FunctionalDomain,
     FunctionalDomainControl,
     FunctionalDomainIdentification,
     FunctionalDomainSensors,
+    FunctionalDomainSetup,
     FunctionalDomainStatus,
 } from "../src/AprilaireClient";
-import { GuideAttribute } from "./helpers/guide-reference";
+import { GuideAttribute, guideEncodeDateAndTime } from "./helpers/guide-reference";
 
 /**
  * Ordered connect steps recommended by
@@ -115,13 +119,17 @@ describe("Best practices bootstrap checklist", () => {
             );
         });
 
-        it("does not yet include DateAndTime write (J3) — tracked as P1 gap", () => {
-            const hasDateTimeAttribute = FunctionalDomainStatus // placeholder existence check
-            expect(hasDateTimeAttribute).toBeDefined();
-            // DateAndTime is Setup attribute 4 — no request class exists yet.
-            // This test files the gap explicitly for the priority list.
-            const dateTimeImplemented = false;
-            expect(dateTimeImplemented).toBe(false);
+        it("includes DateAndTime write (J3) on Setup attribute 0x04 with local wall time", () => {
+            // Connect bootstrap writes DateAndTimeRequest (see AprilaireClient.connect).
+            const local = new Date(2026, 6, 18, 14, 30, 45);
+            const req = DateAndTimeRequest.fromLocalDate(local);
+
+            expect(req.domain).toBe(FunctionalDomain.Setup);
+            expect(req.attribute).toBe(FunctionalDomainSetup.DateAndTime);
+            expect(req.attribute).toBe(GuideAttribute.Setup.DateAndTime);
+            expect(req.attribute).toBe(0x04);
+            expect(req.toBuffer()).toEqual(guideEncodeDateAndTime(local));
+            expect(req.toBuffer()).toEqual(Buffer.from([45, 30, 14, 18, 6, 7, 26]));
         });
     });
 });

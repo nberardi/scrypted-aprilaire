@@ -12,6 +12,7 @@ import {
     FunctionalDomainIdentification,
     FunctionalDomainScheduling,
     FunctionalDomainSensors,
+    FunctionalDomainSetup,
     FunctionalDomainStatus,
     NAckError,
 } from "../src/AprilaireClient";
@@ -21,6 +22,7 @@ import { ControllingSensorsStatusAndValueResponse } from "../src/FunctionalDomai
 import { ScheduleHoldResponse } from "../src/FunctionalDomainScheduling";
 import { ThermostatErrorResponse } from "../src/FunctionalDomainStatus";
 import { MacAddressResponse } from "../src/FunctionalDomainIdentification";
+import { DateAndTimeResponse } from "../src/FunctionalDomainSetup";
 import {
     GUIDE_EXAMPLE_NACK_OOR,
     GuideAction,
@@ -144,6 +146,33 @@ describe("Packet frame & response factory ", () => {
             );
             const obj = frame.toObject();
             expect(obj).toBeInstanceOf(ScheduleHoldResponse);
+        });
+
+        it("parses Setup/DateAndTime ReadResponse into DateAndTimeResponse", () => {
+            // sec,min,hour,date,day,month,year−2000 — 2026-07-18 Sat 14:30:45
+            const data = Buffer.from([45, 30, 14, 18, 6, 7, 26]);
+            const frame = new AprilaireResponsePayload(
+                "127.0.0.1",
+                8000,
+                1,
+                0,
+                3 + data.length,
+                Action.ReadResponse,
+                FunctionalDomain.Setup,
+                FunctionalDomainSetup.DateAndTime,
+                data,
+                0
+            );
+            const obj = frame.toObject();
+            expect(obj).toBeInstanceOf(DateAndTimeResponse);
+            const dt = obj as DateAndTimeResponse;
+            expect(dt.hour).toBe(14);
+            expect(dt.minute).toBe(30);
+            expect(dt.second).toBe(45);
+            expect(dt.date).toBe(18);
+            expect(dt.day).toBe(6);
+            expect(dt.month).toBe(7);
+            expect(dt.year).toBe(26);
         });
 
         it("parses Status/ThermostatError into ThermostatErrorResponse", () => {
