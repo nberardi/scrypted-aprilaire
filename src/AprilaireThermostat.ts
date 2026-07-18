@@ -1,8 +1,8 @@
 import { Fan, FanMode, FanState, FanStatus, FilterMaintenance, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Setting, SettingValue, Settings, TemperatureCommand, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
 import { AprilaireSystemType, AprilaireThermostatBase } from './AprilaireThermostatBase';
-import { DehumidificationSetpointResponse, FanModeSetting, HumidificationSetpointResponse, HumidificationState, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode} from './FunctionalDomainControl';
-import { ScaleRequest, ScaleResponse, TemperatureScale, ThermostatInstallerSettingsResponse } from './FunctionalDomainSetup';
+import { DehumidificationSetpointResponse, FanModeSetting, HumidificationSetpointResponse, HumidificationState, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode, enforceDeadband, DeadbandPreserve } from './FunctionalDomainControl';
+import { DEFAULT_DEADBAND_C, ScaleRequest, ScaleResponse, TemperatureScale, ThermostatInstallerSettingsResponse } from './FunctionalDomainSetup';
 import { HeatBlastRequest, HeatBlastResponse, HoldType, ScheduleHoldResponse } from './FunctionalDomainScheduling';
 import { CoolingStatus, FanStatus as TFanStatus, HeatingStatus, ThermostatStatusResponse } from './FunctionalDomainStatus';
 import { BasePayloadResponse } from './BasePayloadResponse';
@@ -12,6 +12,11 @@ import { StorageSettingsDevice, StorageSettings } from '@scrypted/sdk/storage-se
 export class AprilaireThermostat extends AprilaireThermostatBase implements OnOff, Settings, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySensor, HumiditySetting, FilterMaintenance, Fan {
     private _heatBlastState: boolean;
     private _holdState: string;
+    /**
+     * Deadband separation in °C from Installer Settings §1.1 byte 13.
+     * Default 1.5°C (3°F) until a ThermostatInstallerSettingsResponse arrives.
+     */
+    private _deadbandC: number = DEFAULT_DEADBAND_C;
 
     readonly deviceOn = "On";
     readonly deviceOff = "Off";
@@ -179,15 +184,122 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
             }
             else {
                 request.coolSetpoint = Math.max(setpoint[0], setpoint[1]);
-                request.heatSetpoint = Math.min(setpoint[0], setpoint[1]);                
+                request.heatSetpoint = Math.min(setpoint[0], setpoint[1]);
             }
 
             settings.setpoint = setpoint;
         }
 
+        // In Auto, dual heat+cool writes that violate deadband NACK or surprise-adjust
+        // on the thermostat (§J.6 / §2.1). Pre-enforce so the wire values stay valid.
+        this.applyDeadbandToRequest(request, settings.mode);
+
+        // Reflect any deadband adjustment back into Scrypted state.
+        if (request.heatSetpoint && request.coolSetpoint) {
+            const effectiveMode = mode ?? settings.mode;
+            if (
+                effectiveMode === ThermostatMode.Auto ||
+                effectiveMode === ThermostatMode.HeatCool ||
+                effectiveMode === ThermostatMode.On
+            ) {
+                settings.setpoint = [
+                    Math.min(request.heatSetpoint, request.coolSetpoint),
+                    Math.max(request.heatSetpoint, request.coolSetpoint),
+                ];
+            }
+        }
+
         this.temperatureSetting = settings;
 
         this.client.write(request);
+    }
+
+    /**
+     * When both heat and cool setpoints are present on a write (or can be inferred
+     * from current Auto dual-setpoint state), ensure cool − heat ≥ deadband.
+     *
+     * Preserve policy: keep the setpoint the user is changing; adjust the opposing
+     * one. If both change (or both are newly written), preserve heat and raise cool.
+     */
+    private applyDeadbandToRequest(
+        request: ThermostatSetpointAndModeSettingsRequest,
+        effectiveMode: ThermostatMode | undefined
+    ): void {
+        const isAuto =
+            effectiveMode === ThermostatMode.Auto ||
+            effectiveMode === ThermostatMode.HeatCool ||
+            effectiveMode === ThermostatMode.On ||
+            request.mode === TMode.Auto;
+
+        if (!isAuto) {
+            return;
+        }
+
+        const current = this.currentHeatCoolSetpoints();
+        const heatWritten = Boolean(request.heatSetpoint);
+        const coolWritten = Boolean(request.coolSetpoint);
+
+        // Nothing to enforce unless at least one setpoint is being written.
+        if (!heatWritten && !coolWritten) {
+            return;
+        }
+
+        // Resolve both sides: written value takes precedence, else current Auto pair.
+        let heat = heatWritten ? request.heatSetpoint : current.heat;
+        let cool = coolWritten ? request.coolSetpoint : current.cool;
+        if (!heat || !cool) {
+            // Opposing setpoint unknown — cannot evaluate separation client-side.
+            return;
+        }
+
+        // Put both sides on the wire so the thermostat does not surprise-adjust.
+        request.heatSetpoint = heat;
+        request.coolSetpoint = cool;
+
+        let preserve: DeadbandPreserve = "both";
+        if (heatWritten && !coolWritten) {
+            preserve = "heat";
+        } else if (coolWritten && !heatWritten) {
+            preserve = "cool";
+        } else if (heatWritten && coolWritten && current.heat && current.cool) {
+            const heatChanged = heat !== current.heat;
+            const coolChanged = cool !== current.cool;
+            if (heatChanged && !coolChanged) {
+                preserve = "heat";
+            } else if (coolChanged && !heatChanged) {
+                preserve = "cool";
+            }
+        }
+
+        const result = enforceDeadband(heat, cool, this._deadbandC, preserve);
+        if (result.adjusted) {
+            this.console.info(
+                `deadband ${this._deadbandC}°C: adjusted setpoints heat ${heat}→${result.heatSetpoint}, cool ${cool}→${result.coolSetpoint} (preserve=${preserve})`
+            );
+        }
+        request.heatSetpoint = result.heatSetpoint;
+        request.coolSetpoint = result.coolSetpoint;
+    }
+
+    /** Best-effort current heat/cool from temperatureSetting (protocol °C). */
+    private currentHeatCoolSetpoints(): { heat: number; cool: number } {
+        const sp = this.temperatureSetting?.setpoint;
+        if (Array.isArray(sp) && sp.length >= 2) {
+            return {
+                heat: Math.min(sp[0], sp[1]),
+                cool: Math.max(sp[0], sp[1]),
+            };
+        }
+        if (typeof sp === "number") {
+            // Single setpoint modes: opposing side unknown.
+            if (this.temperatureSetting?.mode === ThermostatMode.Heat) {
+                return { heat: sp, cool: 0 };
+            }
+            if (this.temperatureSetting?.mode === ThermostatMode.Cool) {
+                return { heat: 0, cool: sp };
+            }
+        }
+        return { heat: 0, cool: 0 };
     }
 
     async setTemperatureUnit(temperatureUnit: TemperatureUnit): Promise<void> {
@@ -293,6 +405,12 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
 
         else if (response instanceof ThermostatInstallerSettingsResponse) {
             this.temperatureUnit = response.scale === TemperatureScale.F ? TemperatureUnit.F : TemperatureUnit.C;
+            // §1.1 byte 13 — store for Auto dual-setpoint enforcement before writes.
+            this._deadbandC = response.deadbandC;
+            this.console.info(
+                `installer deadband: index=${response.deadbandIndex} → ${this._deadbandC}°C` +
+                    ` (autoChangeover=${response.autoChangeover})`
+            );
         }
 
         else if (response instanceof HeatBlastResponse) {

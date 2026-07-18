@@ -16,10 +16,16 @@ import {
     ThermostatMode,
     ThermostatSetpointAndModeSettingsRequest,
     ThermostatSetpointAndModeSettingsResponse,
+    enforceDeadband,
 } from "../src/FunctionalDomainControl";
+import {
+    DEFAULT_DEADBAND_C,
+    deadbandIndexToCelsius,
+} from "../src/FunctionalDomainSetup";
 import {
     FunctionalDomain,
     FunctionalDomainControl,
+    convertTemperatureToByte,
 } from "../src/AprilaireClient";
 import {
     GuideAttribute,
@@ -187,6 +193,112 @@ describe("Control domainx", () => {
             expect(HumidificationState.NotAvailable).toBe(0);
             expect(HumidificationState.Auto).toBe(1);
             expect(HumidificationState.Manual).toBe(2);
+        });
+    });
+
+    /**
+     * Deadband enforcement (§J.6 / §2.1).
+     *
+     * Protocol temperatures are always °C. Guide example is in °F:
+     *   Heat 70°F ≈ 21.0°C, Cool 73°F ≈ 22.5°C, deadband 3°F ≈ 1.5°C
+     *   (installer index 1 = "3F or 1.5C"). Lowering cool to 72°F ≈ 22.0°C
+     *   requires heat → 20.5°C (≈69°F) when cool is preserved.
+     */
+    describe(" enforceDeadband (Auto heat/cool separation)", () => {
+        it("leaves setpoints unchanged when separation already ≥ deadband", () => {
+            // 22.5 − 21.0 = 1.5 ≥ 1.5
+            const result = enforceDeadband(21.0, 22.5, 1.5, "both");
+            expect(result.heatSetpoint).toBe(21.0);
+            expect(result.coolSetpoint).toBe(22.5);
+            expect(result.adjusted).toBe(false);
+        });
+
+        it("guide example: lower cool to 22.0°C preserves cool, drops heat to 20.5°C", () => {
+            // Starting pair: heat 21.0 / cool 22.5 / deadband 1.5 (valid).
+            // User lowers cool → 22.0; preserve cool → heat = 22.0 − 1.5 = 20.5.
+            const result = enforceDeadband(21.0, 22.0, 1.5, "cool");
+            expect(result.heatSetpoint).toBe(20.5);
+            expect(result.coolSetpoint).toBe(22.0);
+            expect(result.adjusted).toBe(true);
+            expect(result.coolSetpoint - result.heatSetpoint).toBe(1.5);
+        });
+
+        it("preserve heat raises cool when user raises heat into deadband", () => {
+            // heat 21.5 / cool 22.5 / deadband 1.5 → sep 1.0 < 1.5
+            // preserve heat → cool = 21.5 + 1.5 = 23.0
+            const result = enforceDeadband(21.5, 22.5, 1.5, "heat");
+            expect(result.heatSetpoint).toBe(21.5);
+            expect(result.coolSetpoint).toBe(23.0);
+            expect(result.adjusted).toBe(true);
+        });
+
+        it("preserve both (dual write) keeps heat and raises cool", () => {
+            const result = enforceDeadband(21.0, 21.5, 1.5, "both");
+            expect(result.heatSetpoint).toBe(21.0);
+            expect(result.coolSetpoint).toBe(22.5);
+            expect(result.adjusted).toBe(true);
+        });
+
+        it("uses default deadband 1.5°C when omitted", () => {
+            expect(DEFAULT_DEADBAND_C).toBe(1.5);
+            const result = enforceDeadband(20.0, 21.0); // sep 1.0 < default 1.5
+            expect(result.coolSetpoint - result.heatSetpoint).toBe(DEFAULT_DEADBAND_C);
+            expect(result.adjusted).toBe(true);
+        });
+
+        it("handles wider deadband from installer index (e.g. index 4 = 3.0°C)", () => {
+            const deadbandC = deadbandIndexToCelsius(4); // 3.0°C
+            expect(deadbandC).toBe(3.0);
+            const result = enforceDeadband(20.0, 22.0, deadbandC, "cool");
+            // sep 2.0 < 3.0 → heat = 22.0 − 3.0 = 19.0
+            expect(result.heatSetpoint).toBe(19.0);
+            expect(result.coolSetpoint).toBe(22.0);
+            expect(result.coolSetpoint - result.heatSetpoint).toBe(3.0);
+        });
+
+        it("enforced dual setpoints serialize to valid Control/1 payload bytes", () => {
+            // After enforcement: heat 20.5, cool 22.0 → wire bytes must match encoding.
+            const adjusted = enforceDeadband(21.0, 22.0, 1.5, "cool");
+            const req = new ThermostatSetpointAndModeSettingsRequest();
+            req.mode = ThermostatMode.Auto;
+            req.fan = FanModeSetting.Auto;
+            req.heatSetpoint = adjusted.heatSetpoint;
+            req.coolSetpoint = adjusted.coolSetpoint;
+
+            const buf = req.toBuffer();
+            expect(buf[0]).toBe(ThermostatMode.Auto);
+            expect(buf[2]).toBe(convertTemperatureToByte(20.5));
+            expect(buf[3]).toBe(convertTemperatureToByte(22.0));
+            expect(buf[2]).toBe(guideEncodeTemperature(20.5));
+            expect(buf[3]).toBe(guideEncodeTemperature(22.0));
+            // Separation on the wire equals deadband after round-trip decode path.
+            expect(adjusted.coolSetpoint - adjusted.heatSetpoint).toBe(1.5);
+        });
+
+        it("concrete numeric matrix: heat/cool/deadband in → expected out", () => {
+            const cases: Array<{
+                heat: number;
+                cool: number;
+                deadband: number;
+                preserve: "heat" | "cool" | "both";
+                expectHeat: number;
+                expectCool: number;
+                expectAdjusted: boolean;
+            }> = [
+                { heat: 20, cool: 24, deadband: 1.5, preserve: "both", expectHeat: 20, expectCool: 24, expectAdjusted: false },
+                { heat: 21, cool: 22, deadband: 1.5, preserve: "cool", expectHeat: 20.5, expectCool: 22, expectAdjusted: true },
+                { heat: 21, cool: 22, deadband: 1.5, preserve: "heat", expectHeat: 21, expectCool: 22.5, expectAdjusted: true },
+                { heat: 18, cool: 18.5, deadband: 2.0, preserve: "both", expectHeat: 18, expectCool: 20, expectAdjusted: true },
+                { heat: 22.5, cool: 22.5, deadband: 1.0, preserve: "cool", expectHeat: 21.5, expectCool: 22.5, expectAdjusted: true },
+            ];
+
+            for (const c of cases) {
+                const result = enforceDeadband(c.heat, c.cool, c.deadband, c.preserve);
+                expect(result.heatSetpoint).toBe(c.expectHeat);
+                expect(result.coolSetpoint).toBe(c.expectCool);
+                expect(result.adjusted).toBe(c.expectAdjusted);
+                expect(result.coolSetpoint - result.heatSetpoint).toBeGreaterThanOrEqual(c.deadband);
+            }
         });
     });
 });
