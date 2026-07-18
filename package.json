@@ -24,6 +24,15 @@
     "type": "git",
     "url": "git+https://github.com/nberardi/scrypted-aprilaire.git"
   },
+  "files": [
+    "dist/plugin.zip",
+    "dist/main.nodejs.js",
+    "README.md",
+    "LICENSE.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "scrypted",
     "plugin",

@@ -1,9 +1,17 @@
+# package.json "files" is the allow-list for what gets published.
+# This file ignores common local junk if someone packs without "files".
 .DS_Store
 out/
 node_modules/
+coverage/
+.vscode/
+.venv/
 *.map
-fs
-src
-.vscode
-dist/*.js
-.venv
+src/
+tests/
+tools/
+.github/
+CLAUDE.md
+Claude.md
+vitest.config.ts
+tsconfig.json

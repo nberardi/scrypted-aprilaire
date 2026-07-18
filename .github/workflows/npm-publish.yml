@@ -1,32 +1,119 @@
-# This workflow will run tests using node and then publish a package to GitHub Packages when a release is created
-# For more information see: https://help.github.com/actions/language-and-framework-guides/publishing-nodejs-packages
+# Build, test, and publish on GitHub Release (or manual dispatch).
+#
+# Registries:
+#   1) npmjs.org  — package name `scrypted-aprilaire` (Scrypted plugin install path)
+#   2) GitHub Packages — `@nberardi/scrypted-aprilaire` (npm.pkg.github.com)
+#
+# Secrets:
+#   NPM_TOKEN  — npmjs access token for user `nberardi` with publish rights to
+#                scrypted-aprilaire. Classic E404 on PUT almost always means the
+#                token is missing, expired, or for a different npm account.
+#   GITHUB_TOKEN is provided automatically for GitHub Packages (packages:write).
 
 name: npm publish
 
 on:
   release:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      publish_npmjs:
+        description: Publish to registry.npmjs.org
+        type: boolean
+        default: true
+      publish_github:
+        description: Publish to GitHub Packages (npm.pkg.github.com)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 20
-      - run: npm ci
+      - uses: actions/checkout@v4
 
-  publish-npm:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production webpack bundle
+        run: npm run prepublishOnly
+
+      - name: Verify plugin artifact
+        run: |
+          test -f dist/plugin.zip
+          ls -la dist/
+          node -e "const p=require('./package.json'); console.log('version', p.version, 'name', p.name)"
+
+  publish-npmjs:
     needs: build
+    if: github.event_name == 'release' || inputs.publish_npmjs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: https://registry.npmjs.org/
-      - run: npm ci
-      - run: npm publish --access=public
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production webpack bundle
+        run: npm run prepublishOnly
+
+      - name: Publish to npmjs.org
+        run: npm publish --access=public
         env:
-          NODE_AUTH_TOKEN: ${{secrets.npm_token}}
+          # Prefer NPM_TOKEN; fall back to legacy secret name used by older runs.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.npm_token }}
+
+  publish-github-packages:
+    needs: build
+    if: github.event_name == 'release' || inputs.publish_github
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: '@nberardi'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production webpack bundle
+        run: npm run prepublishOnly
+
+      # GitHub Packages requires a scoped package name (@owner/name).
+      # Keep package.json as scrypted-aprilaire for npmjs/Scrypted; only rename
+      # for this job so the same release is available on both registries.
+      - name: Scope package name for GitHub Packages
+        run: |
+          npm pkg set name=@nberardi/scrypted-aprilaire
+          npm pkg set publishConfig.registry=https://npm.pkg.github.com
+          node -e "console.log(require('./package.json').name)"
+
+      - name: Publish to GitHub Packages
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
