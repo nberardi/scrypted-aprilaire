@@ -29,19 +29,24 @@ export class ScheduleHoldRequest extends BasePayloadRequest {
         super(FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleHold);
     }
 
+    /**
+     * Hold payload is 10 data bytes:
+     * hold, fan, heat, cool, DEH, minute, hour, date(1–31), month(1–12), year−2000
+     */
     toBuffer(): Buffer {
-        let endDate = this.endDate;
+        const endDate = this.endDate;
 
-        let payload = Buffer.alloc(9);
-        payload.writeUint8(this.hold ?? 0, 0);
+        const payload = Buffer.alloc(10);
+        payload.writeUint8(this.hold ?? HoldType.Disabled, 0);
         payload.writeUint8(this.fan ?? 0, 1);
-        payload.writeUint8(convertTemperatureToByte(this.heatSetpoint ?? 0), 2); 
-        payload.writeUint8(convertTemperatureToByte(this.coolSetpoint ?? 0), 3); 
+        // 0 on the wire = Null (do not modify) when the field is omitted
+        payload.writeUint8(convertTemperatureToByte(this.heatSetpoint ?? 0), 2);
+        payload.writeUint8(convertTemperatureToByte(this.coolSetpoint ?? 0), 3);
         payload.writeUint8(this.dehumidifierSetpoint ?? 0, 4);
         payload.writeUint8(endDate?.getMinutes() ?? 0, 5);
-        payload.writeUint8(endDate?.getHours()  ?? 0, 6);
-        payload.writeUint8(endDate?.getDay() ?? 0, 7);
-        payload.writeUint8(endDate?.getMonth() ?? 0, 8);
+        payload.writeUint8(endDate?.getHours() ?? 0, 6);
+        payload.writeUint8(endDate?.getDate() ?? 0, 7);              // day of month 1–31
+        payload.writeUint8(endDate ? endDate.getMonth() + 1 : 0, 8); // month 1–12
         payload.writeUint8(endDate ? endDate.getFullYear() - 2000 : 0, 9);
         return payload;
     }
@@ -55,21 +60,22 @@ export class ScheduleHoldResponse extends BasePayloadResponse {
     dehumidifierSetpoint: number;
     endDate: Date;
     constructor(payload: Buffer) {
-        super(payload, FunctionalDomain.Sensors, FunctionalDomainScheduling.ScheduleHold);
+        super(payload, FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleHold);
 
         this.hold = payload.readUint8(0);
         this.fan = payload.readUint8(1);
         this.heatSetpoint = convertByteToTemperature(payload.readUint8(2));
-        this.coolSetpoint = convertTemperatureToByte(payload.readUint8(3));
+        this.coolSetpoint = convertByteToTemperature(payload.readUint8(3));
         this.dehumidifierSetpoint = payload.readUint8(4);
 
-        let minute = payload.readUint8(5);
-        let hour = payload.readUint8(6);
-        let day = payload.readUint8(7);
-        let month = payload.readUint8(8);
-        let year = payload.readUint8(9);
+        const minute = payload.readUint8(5);
+        const hour = payload.readUint8(6);
+        const day = payload.readUint8(7);
+        const month = payload.readUint8(8); // 1–12 on wire
+        const year = payload.readUint8(9);
 
-        this.endDate = new Date(year + 2000, month, day, hour, minute);
+        // JS Date month is 0-based
+        this.endDate = new Date(year + 2000, Math.max(0, month - 1), day, hour, minute);
     }
 }
 
@@ -97,7 +103,7 @@ export class HeatBlastRequest extends BasePayloadRequest {
 export class HeatBlastResponse extends BasePayloadResponse {
     heatBlast: boolean;
     constructor(payload: Buffer) {
-        super(payload, FunctionalDomain.Sensors, FunctionalDomainScheduling.HeatBlast);
+        super(payload, FunctionalDomain.Scheduling, FunctionalDomainScheduling.HeatBlast);
 
         this.heatBlast = Boolean(payload.readUint8(0));
     }

@@ -27,7 +27,20 @@ npm run scrypted-vscode-launch
 npm run scrypted-deploy
 ```
 
-There is **no test suite** in this project. Testing is done through Scrypted runtime debugging with real Aprilaire hardware.
+### Unit tests (protocol / functional domains)
+
+```bash
+# Run once
+npm test
+
+# Watch mode
+npm run test:watch
+```
+
+Protocol unit tests live in `tests/`.
+They assert wire-level protocol behavior (attribute numbers, temperature encoding, hold layout, NACK policy, etc.) so protocol fixes can be validated without hardware.
+
+Hardware integration is still validated via Scrypted runtime debugging with real Aprilaire thermostats.
 
 There are **no linting or formatting tools** configured.
 
@@ -56,9 +69,14 @@ src/
 ├── FunctionalDomainLockout.ts       # Lockout config (stub)
 └── FunctionalDomainMessaging.ts     # Messaging (stub)
 
+tests/                               # Protocol unit tests
 tools/aprilaire-proxy/               # Standalone TCP proxy for thermostat debugging
 .github/workflows/npm-publish.yml    # CI: build verification + npm publish on release
 ```
+
+## Protocol documentation
+
+Authoritative protocol documentation lives on the **[GitHub Wiki](https://github.com/nberardi/scrypted-aprilaire/wiki)**. Do **not** commit manufacturer manuals (`.docx`/`.pdf`) — they are gitignored.
 
 ## Architecture
 

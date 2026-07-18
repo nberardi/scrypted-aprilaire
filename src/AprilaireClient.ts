@@ -10,7 +10,7 @@ import { ControllingSensorsStatusAndValueResponse, SensorValuesResponse, Written
 import { ThermostatInstallerSettingsResponse, ScaleResponse } from "./FunctionalDomainSetup";
 import { CosRequest, IAQStatusResponse, ThermostatStatusResponse, SyncResponse, ThermostatErrorResponse, OfflineResponse } from "./FunctionalDomainStatus";
 import { BasePayloadRequest } from "./BasePayloadRequest";
-import { BasePayloadResponse } from "./BasePayloadResponse";
+import { BasePayloadResponse, NackResponse } from "./BasePayloadResponse";
 import { AwaySettingsResponse, HeatBlastResponse, ScheduleHoldResponse } from "./FunctionalDomainScheduling";
 import { AlertsStatusResponse, ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
 
@@ -95,7 +95,11 @@ export class AprilaireClient extends EventEmitter {
         else if (response instanceof ThermostatAndIAQAvailableResponse)
             this.system = response;
 
-        if (!this.ready && this.mac && this.firmware && this.system && this.name) {
+        // Ready once identity + capabilities are known. Name is optional: some models
+        // omit or NACK the name attribute (e.g. S86); do not block device discovery.
+        if (!this.ready && this.mac && this.firmware && this.system) {
+            if (!this.name)
+                this.name = "Thermostat";
             this.ready = true;
             this.emit("ready", this);
         }
@@ -145,7 +149,8 @@ export enum FunctionalDomainSetup {
 export enum FunctionalDomainIdentification {
     RevisionAndModel = 1,
     MacAddress = 2,
-    ThermostatName = 4
+    /** Thermostat Name attribute is 0x05 */
+    ThermostatName = 5
 }
 
 export enum FunctionalDomainAlerts {
@@ -207,31 +212,36 @@ export enum NAckError {
     ReadIncorrectPayloadSize = 0x22
 }
 
+/**
+ * Encode Celsius to protocol temperature byte:
+ * bit 7 = sign, bit 6 = 0.5 °C, bits 5–0 = integer magnitude. 0 = Null on writes.
+ */
 export function convertTemperatureToByte(temperature: number): number {
-    // LOG bits ("000000000" + byte.toString(2)).substring(-8);
-    let isNegative = temperature < 0;
-    let isFraction = temperature % 1 >= 0.5;
+    const isNegative = temperature < 0;
+    const magnitude = Math.abs(temperature);
+    const isFraction = magnitude % 1 >= 0.5;
 
-    let byte = Math.floor(temperature)
+    return Math.floor(magnitude)
         + (isFraction ? 64 : 0)
         + (isNegative ? 128 : 0);
-
-    return byte;
 }
 
+/**
+ * Decode protocol temperature byte to Celsius.
+ */
 export function convertByteToTemperature(byte: number): number {
     if (byte < 0 || byte > 255 || byte % 1 !== 0) {
         throw new Error(byte + " does not fit in a byte");
     }
-    // LOG bits ("000000000" + byte.toString(2)).substring(-8);
+
     let value = byte & 63;
 
-    // has fraction
+    // bit 6: half-degree
     if (Boolean(byte >> 6 & 1))
         value += 0.5;
 
-    // is negative
-    if (byte >> 1 === 1)
+    // bit 7: sign
+    if (Boolean(byte >> 7 & 1))
         value = -value;
 
     return value;
@@ -541,8 +551,15 @@ export class AprilaireResponsePayload {
             return undefined;
         }
 
+        // NACK payload is Action + StatusCode only (no domain/attribute).
+        // Frame parser stores status in attribute + a one-byte payload; fall back to domain
+        // when constructed without a payload (status may be carried in either field).
         if (this.action === Action.NAck) {
-            throw Error(`[${this.host}:${this.port}] received error, action=${Action[this.action]}, functional_domain=${FunctionalDomain[this.domain]}, attribute=${this.attribute}}`);
+            const statusCode = this.payload?.length
+                ? this.payload.readUint8(0)
+                : (this.attribute || Number(this.domain));
+            console.warn(this.format(`NACK status=0x${statusCode.toString(16)} (${NAckError[statusCode] ?? "Unknown"})`));
+            return new NackResponse(statusCode);
         }
 
         switch(this.domain) {
@@ -561,6 +578,7 @@ export class AprilaireResponsePayload {
                     case FunctionalDomainIdentification.MacAddress: 
                         return new MacAddressResponse(this.payload);
                     case FunctionalDomainIdentification.ThermostatName:
+                    case 4: // legacy attribute seen on some firmware; guide is 0x05
                         return new ThermostatNameResponse(this.payload);
                 }
                 break;
@@ -733,8 +751,40 @@ class AprilaireSocket extends EventEmitter {
         while(true) {
             if (workingData.length === 0 || count > 50)
                 break;
-        
+
+            // Need at least REV+SEQ+CNT (4 bytes) to read length
+            if (workingData.length < 4)
+                break;
+
             const { revision, sequence, length, action, domain, attribute } = this.decodeHeader(workingData);
+
+            // Full frame: 4-byte header prefix + payload (length) + CRC
+            if (workingData.length < 4 + length + 1)
+                break;
+
+            // NACK CNT=2 → [Action][StatusCode], no domain/attribute.
+            // Byte layout: REV SEQ CNT_H CNT_L ACTION STATUS CRC
+            if (action === Action.NAck) {
+                const statusCode = workingData.readUint8(5);
+                const crc = workingData[4 + length];
+                const crcCheck = generateCrc(workingData.subarray(0, 4 + length));
+
+                console.assert(crc === crcCheck, `failed: crc check, expecting ${crcCheck} received ${crc}`);
+                console.debug(this.format(`received NACK, position=${position}, sequence=${sequence}, status=0x${statusCode.toString(16)}, data=${workingData.toString("base64")}`));
+
+                response.push(new AprilaireResponsePayload(
+                    this.host, this.port, revision, sequence, length,
+                    action, FunctionalDomain.NAck, statusCode,
+                    Buffer.from([statusCode]), crc
+                ));
+
+                const nextStart = 4 + length + 1;
+                workingData = workingData.subarray(nextStart);
+                position = position + nextStart;
+                count++;
+                continue;
+            }
+
             const payload = workingData.subarray(7, 4 + length);
             const crc = workingData[4 + length];
             const crcCheck = generateCrc(workingData.subarray(0, 4 + length));

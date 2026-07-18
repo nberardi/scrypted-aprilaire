@@ -3,3 +3,10 @@ out/
 node_modules/
 dist/
 .venv
+
+# Manufacturer manuals (PDF/DOCX) — keep local only; protocol notes live on the GitHub Wiki
+*.docx
+*.DOCX
+WiFi Programmers Guide*
+Aprilaire*Programmer*
+coverage/

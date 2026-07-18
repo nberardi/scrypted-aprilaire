@@ -11,10 +11,10 @@ import { BasePayloadRequest } from "./BasePayloadRequest";
 * --------------------------|-----------|-------|-------|---------------
 * COS                       |   0x01    |   No  |   R/W |   X
 * Sync                      |   0x02    |   No  |   W   |   X
-* Off line                  |   0x03    |   Yes |   NA  |   
-* Thermostat Status         |   0x04    |   Yes |   R   |   X
-* IAQ Status                |   0x05    |   Yes |   R   |   X
-* Thermostat Error          |   0x06    |   Yes |   R   |   X
+* Off line                  |   0x05    |   Yes |   NA  |   X
+* Thermostat Status         |   0x06    |   Yes |   R   |   X
+* IAQ Status                |   0x07    |   Yes |   R   |   X
+* Thermostat Error          |   0x08    |   Yes |   R   |   X
 *
 */
 
@@ -192,7 +192,7 @@ export class ThermostatErrorResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Status, FunctionalDomainStatus.ThermostatError);
 
-        this.responseError = payload.readUint8(0);
+        this.thermostatError = payload.readUint8(0);
     }
 }
 

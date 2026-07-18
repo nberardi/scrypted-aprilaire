@@ -10,7 +10,7 @@ import { BasePayloadResponse } from "./BasePayloadResponse";
 * --------------------------|-----------|-------|-------|---------------
 * Revision & Model          |   0x01    |   Yes |   R   |   X
 * MAC Address               |   0x02    |   No  |   R   |   X
-* Thermostat Name           |   0x03    |   No  |   R/W |   X
+* Thermostat Name           |   0x05    |   No  |   R/W |   X
 *
 */
 
