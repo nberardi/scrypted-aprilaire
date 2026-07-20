@@ -208,6 +208,21 @@ export class HeatBlastResponse extends BasePayloadResponse {
     }
 }
 
+/** Away Settings heat setpoint by wire index (guide §3.2). */
+export const AWAY_HEAT_SETPOINTS_C = [15.5, 16, 16.5, 17, 17.5, 18.5] as const;
+/** Away Settings cool setpoint by wire index (guide §3.2). */
+export const AWAY_COOL_SETPOINTS_C = [26.5, 27, 27.5, 28.5, 29, 29.5] as const;
+
+/** Nearest wire index for a Celsius value; ties round up. */
+function nearestAwayIndex(values: readonly number[], celsius: number): number {
+    let best = 0;
+    for (let i = 1; i < values.length; i++) {
+        if (Math.abs(values[i] - celsius) <= Math.abs(values[best] - celsius))
+            best = i;
+    }
+    return best;
+}
+
 export class AwaySettingsResponse extends BasePayloadResponse {
     fan: FanModeSetting;
     heatSetpoint: number;
@@ -215,27 +230,13 @@ export class AwaySettingsResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Scheduling, FunctionalDomainScheduling.AwaySettings);
 
-        const awayHeatMap = {
-            0: 15.5,
-            1: 16,
-            2: 16.5,
-            3: 17,
-            4: 17.5,
-            5: 18.5
-        };
-        
-        const awayCoolMap = {
-            0: 26.5,
-            1: 27,
-            2: 27.5,
-            3: 28.5,
-            4: 29,
-            5: 29.5
-        };
-
         this.fan = payload.readUint8(0);
-        this.heatSetpoint = awayHeatMap[payload.readUint8(1)];
-        this.coolSetpoint = awayCoolMap[payload.readUint8(2)];
+        // Clamp out-of-range wire indices to the table bounds so the parsed
+        // setpoints are always numbers, never undefined.
+        const heatIndex = Math.min(payload.readUint8(1), AWAY_HEAT_SETPOINTS_C.length - 1);
+        const coolIndex = Math.min(payload.readUint8(2), AWAY_COOL_SETPOINTS_C.length - 1);
+        this.heatSetpoint = AWAY_HEAT_SETPOINTS_C[heatIndex];
+        this.coolSetpoint = AWAY_COOL_SETPOINTS_C[coolIndex];
     }
 }
 
@@ -248,38 +249,21 @@ export class AwaySettingsRequest extends BasePayloadRequest {
     }
 
     toBuffer(): Buffer {
-        if (this.heatSetpoint < 15.5 || this.heatSetpoint > 18.5) {
+        if (!Number.isFinite(this.heatSetpoint) || this.heatSetpoint < 15.5 || this.heatSetpoint > 18.5) {
             throw new Error("Heat setpoint must be between 15.5 and 18.5");
         }
 
-        if (this.coolSetpoint < 26.5 || this.coolSetpoint > 29.5) {
+        if (!Number.isFinite(this.coolSetpoint) || this.coolSetpoint < 26.5 || this.coolSetpoint > 29.5) {
             throw new Error("Cool setpoint must be between 26.5 and 29.5");
         }
 
-        const awayHeatMap = {
-            15.5: 0,
-            16: 1,
-            16.5: 2,
-            17: 3,
-            17.5: 4,
-            18: 5,
-            18.5: 5
-        };
-        
-        const awayCoolMap = {
-            26.5: 0,
-            27: 1,
-            27.5: 2,
-            28: 3,
-            28.5: 3,
-            29: 4,
-            29.5: 5
-        };
-
         let payload = Buffer.alloc(3);
         payload.writeUint8(this.fan, 0);
-        payload.writeUint8(awayHeatMap[this.heatSetpoint], 1);
-        payload.writeUint8(awayCoolMap[this.coolSetpoint], 2);
+        // The wire encodes only the 6 indexed values; valid-range inputs can
+        // fall off the 0.5° grid (e.g. unit-converted UI values), so snap to
+        // the nearest table entry instead of an exact-key lookup.
+        payload.writeUint8(nearestAwayIndex(AWAY_HEAT_SETPOINTS_C, this.heatSetpoint), 1);
+        payload.writeUint8(nearestAwayIndex(AWAY_COOL_SETPOINTS_C, this.coolSetpoint), 2);
         return payload;
     }
 }
