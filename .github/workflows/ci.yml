@@ -1,0 +1,44 @@
+# Run unit tests and a production build for every pull request and push to main.
+#
+# Mirrors the build job in npm-publish.yml so a PR can't merge anything the
+# release pipeline would fail on.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Cancel superseded runs when a PR is force-pushed or updated.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production webpack bundle
+        run: npm run prepublishOnly
+
+      - name: Verify plugin artifact
+        run: |
+          test -f dist/plugin.zip
+          ls -la dist/
