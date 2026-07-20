@@ -968,7 +968,8 @@ class AprilaireSocket extends EventEmitter {
     port: number;
     
     private client: net.Socket;
-    private _connected: boolean = true;
+    /** False until the socket's "ready" event; setupSocket() resets it on reconnect. */
+    private _connected: boolean = false;
     /** Sticky TCP receive buffer: retains incomplete frame tails across `data` events. */
     private receiveBuffer: Buffer = Buffer.alloc(0);
     private outboundQueue: OutboundRequestQueue;

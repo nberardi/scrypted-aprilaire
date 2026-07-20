@@ -71,7 +71,8 @@ src/
 
 tests/                               # Protocol unit tests
 tools/aprilaire-proxy/               # Standalone TCP proxy for thermostat debugging
-.github/workflows/npm-publish.yml    # CI: build verification + npm publish on release
+.github/workflows/ci.yml             # CI: tests + production build on every PR / push to main
+.github/workflows/npm-publish.yml    # Release: build, test, publish to GitHub Packages
 ```
 
 ## Protocol documentation
@@ -144,9 +145,11 @@ Utility functions: `convertTemperatureToByte()` and `convertByteToTemperature()`
 
 ## CI/CD
 
-- **Trigger**: GitHub release creation
-- **Pipeline**: `npm ci` build verification, then `npm publish --access=public` to npm
-- **Node version**: 20
+Two workflows in `.github/workflows/`, both on Node 22:
+
+- **`ci.yml`** — every pull request and push to `main`: `npm ci`, unit tests, production webpack bundle, and `dist/plugin.zip` artifact verification.
+- **`npm-publish.yml`** — GitHub release (or manual dispatch): same build + tests, then publishes to **GitHub Packages** as `@nberardi/scrypted-aprilaire` using `GITHUB_TOKEN`. It does **not** publish to npmjs.org.
+- **npmjs.org** (`scrypted-aprilaire`) is published locally when needed: `npm run publish:npmjs` (requires OTP).
 
 ## Important Notes for AI Assistants
 
