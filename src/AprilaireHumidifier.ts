@@ -11,13 +11,12 @@ export class AprilaireHumidifier extends AprilaireThermostatBase implements OnOf
         super(nativeId, client, AprilaireSystemType.Humidifier);
     }
 
-    setFan(fan: FanState): Promise<void> {
-        if (fan.speed) {
-            if (fan.speed === 0)
-                return this.turnOff();
-            else
-                return this.turnOn();
-        }
+    async setFan(fan: FanState): Promise<void> {
+        if (fan.speed === undefined)
+            return;
+        if (fan.speed === 0)
+            return this.turnOff();
+        return this.turnOn();
     }
 
     async turnOff(): Promise<void> {
@@ -35,35 +34,32 @@ export class AprilaireHumidifier extends AprilaireThermostatBase implements OnOf
 
         let hrequest = new HumidificationSetpointRequest();
         hrequest.on = true;
-        hrequest.humidificationSetpoint = this.humiditySetting.humidifierSetpoint;
+        hrequest.humidificationSetpoint = this.humiditySetting?.humidifierSetpoint ?? 0;
         this.client.write(hrequest);
     }
 
     async setHumidity(humidity: HumidityCommand): Promise<void> {
         let hrequest = new HumidificationSetpointRequest();
 
-        if (humidity.humidifierSetpoint) {
-            hrequest.humidificationSetpoint = humidity.humidifierSetpoint;
-        }
+        hrequest.humidificationSetpoint =
+            humidity.humidifierSetpoint ?? this.humiditySetting?.humidifierSetpoint ?? 0;
 
         if (humidity.mode) {
             switch (humidity.mode) {
-                case HumidityMode.Off:
-                    hrequest.on = false;
-                    break;
-
                 case HumidityMode.Auto:
-                    hrequest.on = true;
-                    break;
-
-                case HumidityMode.Dehumidify:
-                    hrequest.on = false;
-                    break;
-
                 case HumidityMode.Humidify:
                     hrequest.on = true;
                     break;
+
+                default:
+                    hrequest.on = false;
+                    break;
             }
+        } else {
+            // Setpoint-only change: keep the current on/off state. The wire
+            // encodes off as setpoint 0, so leaving `on` unset would turn the
+            // unit off when the user only moves the humidity slider.
+            hrequest.on = this.humiditySetting?.mode === HumidityMode.Humidify;
         }
 
         this.client.write(hrequest);
