@@ -12,13 +12,12 @@ export class AprilaireDehumidifier extends AprilaireThermostatBase implements On
         super(nativeId, client, AprilaireSystemType.Dehumidifier);
     }
 
-    setFan(fan: FanState): Promise<void> {
-        if (fan.speed) {
-            if (fan.speed === 0)
-                return this.turnOff();
-            else
-                return this.turnOn();
-        }
+    async setFan(fan: FanState): Promise<void> {
+        if (fan.speed === undefined)
+            return;
+        if (fan.speed === 0)
+            return this.turnOff();
+        return this.turnOn();
     }
 
     async turnOff(): Promise<void> {
@@ -30,35 +29,32 @@ export class AprilaireDehumidifier extends AprilaireThermostatBase implements On
     async turnOn(): Promise<void> {
         let hrequest = new DehumidificationSetpointRequest();
         hrequest.on = true;
-        hrequest.dehumidificationSetpoint = this.humiditySetting.humidifierSetpoint;
+        hrequest.dehumidificationSetpoint = this.humiditySetting?.dehumidifierSetpoint ?? 0;
         this.client.write(hrequest);
     }
 
     async setHumidity(humidity: HumidityCommand): Promise<void> {
         let drequest = new DehumidificationSetpointRequest();
 
-        if (humidity.dehumidifierSetpoint) {
-            drequest.dehumidificationSetpoint = humidity.dehumidifierSetpoint;
-        }
+        drequest.dehumidificationSetpoint =
+            humidity.dehumidifierSetpoint ?? this.humiditySetting?.dehumidifierSetpoint ?? 0;
 
         if (humidity.mode) {
             switch (humidity.mode) {
-                case HumidityMode.Off:
-                    drequest.on = false;
-                    break;
-
                 case HumidityMode.Auto:
-                    drequest.on = true;
-                    break;
-
                 case HumidityMode.Dehumidify:
                     drequest.on = true;
                     break;
 
-                case HumidityMode.Humidify:
+                default:
                     drequest.on = false;
                     break;
             }
+        } else {
+            // Setpoint-only change: keep the current on/off state. The wire
+            // encodes off as setpoint 0, so leaving `on` unset would turn the
+            // unit off when the user only moves the humidity slider.
+            drequest.on = this.humiditySetting?.mode === HumidityMode.Dehumidify;
         }
 
         this.client.write(drequest);
@@ -101,7 +97,7 @@ export class AprilaireDehumidifier extends AprilaireThermostatBase implements On
         else if (response instanceof ThermostatAndIAQAvailableResponse) {
             let modes: HumidityMode[] = [HumidityMode.Off];
             if (response.dehumidification)
-                modes.push(HumidityMode.Humidify);
+                modes.push(HumidityMode.Dehumidify);
 
             humiditySetting.availableModes = modes;
             this.console.info("dehumidity modes: " + humiditySetting.availableModes);

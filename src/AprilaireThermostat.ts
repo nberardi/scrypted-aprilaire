@@ -107,12 +107,23 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
     }
 
     async setFan(fan: FanState): Promise<void> {
+        // Explicit mode wins; otherwise infer from speed (>0 = manual/on, 0 = auto).
+        let mode: FanMode;
+        if (fan.mode !== undefined)
+            mode = fan.mode === FanMode.Auto ? FanMode.Auto : FanMode.Manual;
+        else if (fan.speed !== undefined)
+            mode = fan.speed > 0 ? FanMode.Manual : FanMode.Auto;
+        else
+            return;
+
         var setting = {...this.fan};
-        setting.mode = fan.mode === FanMode.Auto ? FanMode.Auto : FanMode.Manual;
-        setting.speed = fan.mode === FanMode.Auto ? 1 : 0;
+        setting.mode = mode;
+        // Manual = fan forced on; in Auto the ThermostatStatus COS reports actual state.
+        setting.speed = mode === FanMode.Manual ? 1 : 0;
+        setting.active = mode === FanMode.Manual;
 
         let request = new ThermostatSetpointAndModeSettingsRequest();
-        request.fan = fan.mode === FanMode.Auto ? FanModeSetting.Auto : FanModeSetting.On;
+        request.fan = mode === FanMode.Auto ? FanModeSetting.Auto : FanModeSetting.On;
 
         this.fan = setting;
         this.client.write(request);

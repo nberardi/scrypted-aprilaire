@@ -36,6 +36,11 @@ export class AprilaireThermostatBase extends ScryptedDeviceBase implements Onlin
             availableModes: [FanMode.Auto, FanMode.Manual]
         };
 
+        // Devices are constructed after the client's "ready", so start online.
+        this.online = true;
+        this.client.on("connected", () => { this.online = true; });
+        this.client.on("disconnected", () => { this.online = false; });
+
         // ensure that the modes are properly configured
         this.processResponse(client.system);
         this.client.on("response", this.processResponse.bind(this));
@@ -120,7 +125,9 @@ export class AprilaireThermostatBase extends ScryptedDeviceBase implements Onlin
         }
 
         else if (response instanceof OfflineResponse) {
-            this.on = response.offline === false;
+            // Status/Offline reports protocol availability — reflect it on the
+            // Online interface, not OnOff (it is not a power state).
+            this.online = response.offline === false;
         }
     }
 }
