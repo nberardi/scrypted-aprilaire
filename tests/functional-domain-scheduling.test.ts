@@ -75,6 +75,47 @@ describe("Scheduling domainx", () => {
             req.coolSetpoint = 26.5;
             expect(() => req.toBuffer()).toThrow();
         });
+
+        it("snaps in-range off-grid setpoints to the nearest wire index", () => {
+            // Valid range but between table entries (e.g. unit-converted UI values)
+            const cases: Array<[number, number, number, number]> = [
+                // [heat °C, cool °C, expected heat index, expected cool index]
+                [15.7, 26.6, 0, 0],   // nearest 15.5 / 26.5
+                [16.2, 27.2, 1, 1],   // nearest 16 / 27
+                [18, 28, 5, 3],       // ties round up: 18.5 / 28.5 (legacy map behavior)
+                [18.4, 29.1, 5, 4],   // nearest 18.5 / 29
+            ];
+            for (const [heat, cool, heatIndex, coolIndex] of cases) {
+                const req = new AwaySettingsRequest();
+                req.fan = FanModeSetting.Auto;
+                req.heatSetpoint = heat;
+                req.coolSetpoint = cool;
+                const buf = req.toBuffer();
+                expect(buf[1]).toBe(heatIndex);
+                expect(buf[2]).toBe(coolIndex);
+            }
+        });
+
+        it("rejects undefined/NaN setpoints instead of writing garbage", () => {
+            const req = new AwaySettingsRequest();
+            req.fan = FanModeSetting.Auto;
+            // setpoints left undefined
+            expect(() => req.toBuffer()).toThrow();
+        });
+
+        it("clamps out-of-range wire indices when parsing (never undefined)", () => {
+            const res = new AwaySettingsResponse(Buffer.from([FanModeSetting.Auto, 9, 250]));
+            expect(res.heatSetpoint).toBe(18.5);
+            expect(res.coolSetpoint).toBe(29.5);
+        });
+
+        it("stamps responses with a numeric timestamp", () => {
+            const before = Date.now();
+            const res = new AwaySettingsResponse(Buffer.from([FanModeSetting.Auto, 0, 0]));
+            expect(typeof res.timestamp).toBe("number");
+            expect(res.timestamp).toBeGreaterThanOrEqual(before);
+            expect(res.timestamp).toBeLessThanOrEqual(Date.now());
+        });
     });
 
     describe(" Schedule Hold ", () => {

@@ -2,7 +2,7 @@ import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentificati
 
 
 export class BasePayloadResponse {
-    timestamp = Date.now;
+    timestamp = Date.now();
 
     payload: Buffer;
     responseError: ResponseErrorType;
