@@ -594,6 +594,11 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
                     tempSettings.mode = ThermostatMode.Heat;
                     break;
                 case TMode.Off:
+                    // Asymmetric on purpose: Scrypted Off and FanOnly both write
+                    // TMode.Off (the protocol has no separate fan-only mode), so
+                    // readback cannot distinguish them. Report FanOnly + on=false:
+                    // `on` carries the power state, and FanOnly keeps the fan
+                    // controls usable while heating/cooling is off.
                     this.on = false;
                     tempSettings.mode = ThermostatMode.FanOnly;
                     break;
