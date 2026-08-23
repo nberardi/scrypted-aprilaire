@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    auto-merge:
+      - match:
+          update-type: "version-update:semver-minor"
+      - match:
+          update-type: "version-update:semver-patch"
