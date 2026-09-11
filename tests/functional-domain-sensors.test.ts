@@ -11,6 +11,9 @@ import {
     OurdoorSensorStatus,
     SensorValuesRequest,
     SensorValuesResponse,
+    SupportModuleSensorMode,
+    SupportModulesRequest,
+    SupportModulesResponse,
     TemperatureSensorStatus,
     WrittenOutdoorTemperatureValueRequest,
     WrittenOutdoorTemperatureValueResponse,
@@ -167,6 +170,33 @@ describe("Sensors domainx", () => {
             expect(WRITTEN_ODT_MAX_STALE_MS).toBe(10 * 60 * 1000);
             const pluginDefaultIntervalMs = 1 * 60 * 1000;
             expect(pluginDefaultIntervalMs).toBeLessThan(WRITTEN_ODT_MAX_STALE_MS);
+        });
+    });
+
+    describe(" Support Modules (§5.3)", () => {
+        it("read request sends a 1-byte module selector 0–3", () => {
+            const req = new SupportModulesRequest(2);
+            expect(req.attribute).toBe(GuideAttribute.Sensors.SupportModules);
+            expect(req.toReadBuffer()).toEqual(Buffer.from([2]));
+            expect(req.toBuffer().length).toBe(0);
+        });
+
+        it("parses 8-byte module status/mode/temp/RH", () => {
+            const payload = Buffer.from([
+                1, // address 1
+                HumiditySensorStatus.NoError,
+                SupportModuleSensorMode.Control,
+                guideEncodeTemperature(21),
+                HumiditySensorStatus.NotInstalled,
+                SupportModuleSensorMode.Absent,
+                0,
+                0,
+            ]);
+            const res = new SupportModulesResponse(payload);
+            expect(res.address).toBe(1);
+            expect(res.sensor1Mode).toBe(SupportModuleSensorMode.Control);
+            expect(res.sensor1Temperature).toBe(21);
+            expect(res.sensor2Status).toBe(HumiditySensorStatus.NotInstalled);
         });
     });
 });

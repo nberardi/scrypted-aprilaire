@@ -6,13 +6,13 @@ import net from 'node:net';
 import { EventEmitter } from "events";
 import { ThermostatAndIAQAvailableResponse, FreshAirSettingsResponse, AirCleaningSettingsResponse, DehumidificationSetpointResponse, HumidificationSetpointResponse, ThermostatSetpointAndModeSettingsResponse } from "./FunctionalDomainControl";
 import { MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse, sanitizeIdentificationText } from "./FunctionalDomainIdentification";
-import { ControllingSensorsStatusAndValueResponse, SensorValuesResponse, WrittenOutdoorTemperatureValueResponse } from "./FunctionalDomainSensors";
+import { ControllingSensorsStatusAndValueResponse, SensorValuesResponse, SupportModulesResponse, WrittenOutdoorTemperatureValueResponse } from "./FunctionalDomainSensors";
 import { ThermostatInstallerSettingsResponse, ScaleResponse, DateAndTimeRequest, DateAndTimeResponse } from "./FunctionalDomainSetup";
 import { CosRequest, CosReadRequest, CosResponse, IAQStatusResponse, ThermostatStatusResponse, SyncResponse, ThermostatErrorResponse, OfflineResponse } from "./FunctionalDomainStatus";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse, NackResponse } from "./BasePayloadResponse";
-import { AwaySettingsResponse, HeatBlastResponse, ScheduleHoldResponse } from "./FunctionalDomainScheduling";
-import { AlertsStatusResponse, ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
+import { AwaySettingsResponse, HeatBlastResponse, ScheduleDayResponse, ScheduleHoldResponse, ScheduleSettingsResponse } from "./FunctionalDomainScheduling";
+import { AlertsSettingsResponse, AlertsStatusResponse, ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
 import { OutboundRequest, OutboundRequestQueue, PermanentNackEvent } from "./OutboundRequestQueue";
 
 export class AprilaireClient extends EventEmitter {
@@ -333,6 +333,36 @@ export enum FunctionalDomainIdentification {
     /** Thermostat Name attribute is 0x05 (guide) */
     ThermostatName = 5
 }
+
+export enum FunctionalDomainLockout {
+    LockoutSettings = 1
+}
+
+export enum FunctionalDomainMessaging {
+    PermanentMessages = 1,
+    TemporaryMessage = 2
+}
+
+export enum FunctionalDomainDisplay {
+    LcdBacklightSettings = 1
+}
+
+/**
+ * Attribute number within a functional domain.
+ * NACK frames have no domain/attribute; the status code is stored separately.
+ */
+export type FunctionalDomainAttribute =
+    | FunctionalDomainSetup
+    | FunctionalDomainControl
+    | FunctionalDomainScheduling
+    | FunctionalDomainAlerts
+    | FunctionalDomainSensors
+    | FunctionalDomainLockout
+    | FunctionalDomainStatus
+    | FunctionalDomainIdentification
+    | FunctionalDomainMessaging
+    | FunctionalDomainDisplay
+    | number;
 
 export enum FunctionalDomainAlerts {
     ServiceRemindersStatus = 1,
@@ -898,12 +928,16 @@ export class AprilaireResponsePayload {
                 break;
             case FunctionalDomain.Scheduling:
                 switch(this.attribute) {
+                    case FunctionalDomainScheduling.ScheduleSettings:
+                        return new ScheduleSettingsResponse(this.payload);
                     case FunctionalDomainScheduling.ScheduleHold:
                         return new ScheduleHoldResponse(this.payload);
                     case FunctionalDomainScheduling.HeatBlast:
                         return new HeatBlastResponse(this.payload);
                     case FunctionalDomainScheduling.AwaySettings:
                         return new AwaySettingsResponse(this.payload);
+                    case FunctionalDomainScheduling.ScheduleDay:
+                        return new ScheduleDayResponse(this.payload);
                 }
                 break;
             case FunctionalDomain.Alerts:
@@ -912,6 +946,8 @@ export class AprilaireResponsePayload {
                         return new ServiceRemindersStatusResponse(this.payload);
                     case FunctionalDomainAlerts.AlertsStatus: 
                         return new AlertsStatusResponse(this.payload);
+                    case FunctionalDomainAlerts.AlertsSettings:
+                        return new AlertsSettingsResponse(this.payload);
                 }
                 break;
             case FunctionalDomain.Control:
@@ -952,6 +988,8 @@ export class AprilaireResponsePayload {
                         return new SensorValuesResponse(this.payload);
                     case FunctionalDomainSensors.ControllingSensorValues:
                         return new ControllingSensorsStatusAndValueResponse(this.payload);
+                    case FunctionalDomainSensors.SupportModules:
+                        return new SupportModulesResponse(this.payload);
                     case FunctionalDomainSensors.WrittenOutdoorTemperatureValue:
                         return new WrittenOutdoorTemperatureValueResponse(this.payload);
                 }
@@ -1109,8 +1147,10 @@ class AprilaireSocket extends EventEmitter {
         this.client = undefined;
     }
 
-    readObjectRequest(request: BasePayloadRequest) { 
-        this.sendCommand(Action.ReadRequest, request.domain, request.attribute);
+    readObjectRequest(request: BasePayloadRequest) {
+        // Selector-bearing reads (Schedule Day, Support Modules, Permanent Messages)
+        // send toReadBuffer(); all other reads are empty. Never use toBuffer() here.
+        this.sendCommand(Action.ReadRequest, request.domain, request.attribute, request.toReadBuffer());
     }
 
     writeObjectRequest(request: BasePayloadRequest) {
@@ -1118,11 +1158,11 @@ class AprilaireSocket extends EventEmitter {
         this.sendCommand(Action.Write, request.domain, request.attribute, buffer);
     }
 
-    sendRequest(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
+    sendRequest(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainAttribute) {
         this.sendCommand(action, domain, attribute);
     }
 
-    private sendCommand(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup, data: Buffer = Buffer.alloc(0)) {
+    private sendCommand(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainAttribute, data: Buffer = Buffer.alloc(0)) {
         const request: OutboundRequest = { action, domain, attribute, data };
         console.debug(this.format(
             `queuing data, action=${Action[action]}, functional_domain=${FunctionalDomain[domain]}, attribute=${attribute}, pending=${this.outboundQueue.pendingCount}`

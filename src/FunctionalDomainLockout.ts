@@ -1,8 +1,3 @@
-import { FunctionalDomain, convertTemperatureToByte, FunctionalDomainScheduling, convertByteToTemperature } from "./AprilaireClient";
-import { BasePayloadRequest } from "./BasePayloadRequest";
-import { BasePayloadResponse } from "./BasePayloadResponse";
-import { FanModeSetting } from "./FunctionalDomainControl";
-
 /*
 *
 * Functional Domain: Lockout
@@ -10,6 +5,9 @@ import { FanModeSetting } from "./FunctionalDomainControl";
 *
 * Attribute                                 |   Byte    |   COS |   R/W |   Implimented
 * ------------------------------------------|-----------|-------|-------|---------------
-* Lockout                                   |   0x01    |   Yes |   R/W |   
+* Lockout Settings                          |   0x01    |   Yes |   R/W |
+*
+* Wiki §6.1: 8-byte R/W (full/partial, mode/fan/dehum/menu/setpoint lockouts).
+* Codec not implemented — tracked as P3.2 / #29.
 *
 */

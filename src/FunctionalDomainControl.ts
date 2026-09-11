@@ -11,7 +11,7 @@ import { DEFAULT_DEADBAND_C } from "./FunctionalDomainSetup";
 * Attribute                                 |   Byte    |   COS |   R/W |   Implimented
 * ------------------------------------------|-----------|-------|-------|---------------
 * Thermostate Setpoint and Mode Settings    |   0x01    |   Yes |   R/W |   X
-* Increment Setpoint                        |   0x02    |   No  |   W   |   
+* Increment Setpoint                        |   0x02    |   No  |   W   |   X
 * Dehumidiification Setpoint                |   0x03    |   Yes |   R/W |   X
 * Humidification Setpoint                   |   0x04    |   Yes |   R/W |   X
 * Fresh Air Setting                         |   0x05    |   Yes |   R/W |   X
@@ -111,6 +111,31 @@ export class ThermostatSetpointAndModeSettingsRequest extends BasePayloadRequest
     }
 }
 
+/**
+ * Control §2.2 Increment Setpoint — write-only, 4 bytes.
+ * Behaves like a thermostat button press (lockouts do not apply).
+ * 0 = Decrement, 1 = Increment, 2 = Null (do not change).
+ */
+export class IncrementSetpointRequest extends BasePayloadRequest {
+    heat: IncrementDirection = IncrementDirection.Null;
+    cool: IncrementDirection = IncrementDirection.Null;
+    humidifier: IncrementDirection = IncrementDirection.Null;
+    dehumidifier: IncrementDirection = IncrementDirection.Null;
+
+    constructor() {
+        super(FunctionalDomain.Control, FunctionalDomainControl.IncrementSetpoint);
+    }
+
+    toBuffer(): Buffer {
+        const payload = Buffer.alloc(4);
+        payload.writeUint8(this.heat ?? IncrementDirection.Null, 0);
+        payload.writeUint8(this.cool ?? IncrementDirection.Null, 1);
+        payload.writeUint8(this.humidifier ?? IncrementDirection.Null, 2);
+        payload.writeUint8(this.dehumidifier ?? IncrementDirection.Null, 3);
+        return payload;
+    }
+}
+
 export class DehumidificationSetpointRequest extends BasePayloadRequest {
     on: boolean;
     dehumidificationSetpoint: number;
@@ -161,6 +186,22 @@ export class HumidificationSetpointResponse extends BasePayloadResponse {
     }
 }
 
+export class FreshAirSettingsRequest extends BasePayloadRequest {
+    mode: FreshAirMode = FreshAirMode.Off;
+    event: FreshAirEvent = FreshAirEvent.Off;
+
+    constructor() {
+        super(FunctionalDomain.Control, FunctionalDomainControl.FreshAirSetting);
+    }
+
+    toBuffer(): Buffer {
+        const payload = Buffer.alloc(2);
+        payload.writeUint8(this.mode ?? FreshAirMode.Off, 0);
+        payload.writeUint8(this.event ?? FreshAirEvent.Off, 1);
+        return payload;
+    }
+}
+
 export class FreshAirSettingsResponse extends BasePayloadResponse {
     mode: FreshAirMode;
     event: FreshAirEvent;
@@ -169,6 +210,22 @@ export class FreshAirSettingsResponse extends BasePayloadResponse {
 
         this.mode = payload.readUint8(0);
         this.event = payload.readUint8(1);
+    }
+}
+
+export class AirCleaningSettingsRequest extends BasePayloadRequest {
+    mode: AirCleaningMode = AirCleaningMode.Off;
+    event: AirCleaningEvent = AirCleaningEvent.Off;
+
+    constructor() {
+        super(FunctionalDomain.Control, FunctionalDomainControl.AirCleaningSetting);
+    }
+
+    toBuffer(): Buffer {
+        const payload = Buffer.alloc(2);
+        payload.writeUint8(this.mode ?? AirCleaningMode.Off, 0);
+        payload.writeUint8(this.event ?? AirCleaningEvent.Off, 1);
+        return payload;
     }
 }
 
@@ -216,6 +273,12 @@ export enum ThermostatCapabilities {
     HeatEmergencyHeatCoolAndAuto = 6
 }
 
+
+export enum IncrementDirection {
+    Decrement = 0,
+    Increment = 1,
+    Null = 2
+}
 
 export enum FreshAirMode {
     Off = 0,

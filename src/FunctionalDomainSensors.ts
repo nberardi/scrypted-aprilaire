@@ -1,5 +1,5 @@
 import { FunctionalDomain, convertByteToTemperature, convertTemperatureToByte, FunctionalDomainSensors } from "./AprilaireClient";
-import { BasePayloadResponse, ResponseErrorType } from "./BasePayloadResponse";
+import { BasePayloadResponse, ResponseErrorType, readPayloadU8 } from "./BasePayloadResponse";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 
 /*
@@ -11,7 +11,7 @@ import { BasePayloadRequest } from "./BasePayloadRequest";
 * ------------------------------------------|-----------|-------|-------|---------------
 * Sensor Values                             |   0x01    |   No  |   R   |   X
 * Controlling Sensor Values                 |   0x02    |   Yes |   R   |   X
-* Support Modules                           |   0x03    |   Yes |   R   |   
+* Support Modules                           |   0x03    |   Yes |   R   |   X
 * Written Outdoor Temperature Value         |   0x04    |   Yes |   R/W |   X
 *
 */
@@ -133,14 +133,62 @@ export class ControllingSensorsStatusAndValueResponse extends BasePayloadRespons
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Sensors, FunctionalDomainSensors.ControllingSensorValues);
 
-        this.indoorTemperatureStatus = payload.readUint8(0);
-        this.indoorTemperature = convertByteToTemperature(payload.readUint8(1));
-        this.outdoorTemperatureStatus = payload.readUint8(2);
-        this.outdoorTemperature = convertByteToTemperature(payload.readUint8(3));
-        this.indoorHumidityStatus = payload.readUint8(4);
-        this.indoorHumidity = payload.readUint8(5);
-        this.outdoorHumidityStatus = payload.readUint8(6);
-        this.outdoorHumidity = payload.readUint8(7);
+        this.indoorTemperatureStatus = readPayloadU8(payload, 0);
+        this.indoorTemperature = convertByteToTemperature(readPayloadU8(payload, 1));
+        this.outdoorTemperatureStatus = readPayloadU8(payload, 2);
+        this.outdoorTemperature = convertByteToTemperature(readPayloadU8(payload, 3));
+        this.indoorHumidityStatus = readPayloadU8(payload, 4);
+        this.indoorHumidity = readPayloadU8(payload, 5);
+        this.outdoorHumidityStatus = readPayloadU8(payload, 6);
+        this.outdoorHumidity = readPayloadU8(payload, 7);
+    }
+}
+
+/**
+ * Read Sensors / Support Modules (§5.3) — 1-byte selector 0–3 = module 1–4.
+ */
+export class SupportModulesRequest extends BasePayloadRequest {
+    /** Zero-based module index (0–3). */
+    moduleIndex: number = 0;
+
+    constructor(moduleIndex: number = 0) {
+        super(FunctionalDomain.Sensors, FunctionalDomainSensors.SupportModules);
+        this.moduleIndex = moduleIndex;
+    }
+
+    toReadBuffer(): Buffer {
+        return Buffer.from([this.moduleIndex & 0x03]);
+    }
+}
+
+export enum SupportModuleSensorMode {
+    Control = 0,
+    Monitor = 1,
+    Absent = 2
+}
+
+/** Support Modules §5.3 — 8 bytes. Except 8810; up to 4 modules. */
+export class SupportModulesResponse extends BasePayloadResponse {
+    address: number;
+    sensor1Status: HumiditySensorStatus;
+    sensor1Mode: SupportModuleSensorMode;
+    sensor1Temperature: number;
+    sensor2Status: HumiditySensorStatus;
+    sensor2Mode: SupportModuleSensorMode;
+    sensor2Temperature: number;
+    sensor2Humidity: number;
+
+    constructor(payload: Buffer) {
+        super(payload, FunctionalDomain.Sensors, FunctionalDomainSensors.SupportModules);
+
+        this.address = readPayloadU8(payload, 0);
+        this.sensor1Status = readPayloadU8(payload, 1);
+        this.sensor1Mode = readPayloadU8(payload, 2);
+        this.sensor1Temperature = convertByteToTemperature(readPayloadU8(payload, 3));
+        this.sensor2Status = readPayloadU8(payload, 4);
+        this.sensor2Mode = readPayloadU8(payload, 5);
+        this.sensor2Temperature = convertByteToTemperature(readPayloadU8(payload, 6));
+        this.sensor2Humidity = readPayloadU8(payload, 7);
     }
 }
 

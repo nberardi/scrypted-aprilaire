@@ -10,13 +10,161 @@ import { FanModeSetting } from "./FunctionalDomainControl";
 *
 * Attribute                                 |   Byte    |   COS |   R/W |   Implimented
 * ------------------------------------------|-----------|-------|-------|---------------
-* Schedule Settings                         |   0x01    |   Yes |   R/W |   
+* Schedule Settings                         |   0x01    |   Yes |   R/W |   X
 * Away Settings                             |   0x02    |   Yes |   R/W |   X
-* Schedule Day                              |   0x03    |   Yes |   R/W |   
+* Schedule Day                              |   0x03    |   Yes |   R/W |   X
 * Schedule Hold                             |   0x04    |   Yes |   R/W |   X
 * Heat Blast                                |   0x05    |   Yes |   R/W |   X
 *
 */
+
+/** Schedule Settings §3.1 — 1 byte program type. */
+export enum ScheduleProgramType {
+    Programmable = 0,
+    NonProgrammable = 1
+}
+
+export class ScheduleSettingsRequest extends BasePayloadRequest {
+    programType: ScheduleProgramType = ScheduleProgramType.Programmable;
+
+    constructor() {
+        super(FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleSettings);
+    }
+
+    toBuffer(): Buffer {
+        const payload = Buffer.alloc(1);
+        payload.writeUint8(this.programType ?? ScheduleProgramType.Programmable, 0);
+        return payload;
+    }
+}
+
+export class ScheduleSettingsResponse extends BasePayloadResponse {
+    programType: ScheduleProgramType;
+
+    constructor(payload: Buffer) {
+        super(payload, FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleSettings);
+        this.programType = payload.readUint8(0);
+    }
+}
+
+/**
+ * Schedule Day §3.3 byte 0. 0–6 are Sunday–Saturday (valid on read).
+ * 7–9 are write-only bulk selectors.
+ */
+export enum ScheduleDayIndex {
+    Sunday = 0,
+    Monday = 1,
+    Tuesday = 2,
+    Wednesday = 3,
+    Thursday = 4,
+    Friday = 5,
+    Saturday = 6,
+    Weekdays = 7,
+    Weekend = 8,
+    AllDays = 9
+}
+
+/** One of Wake / Leave / Return / Sleep — 5 bytes on the wire. */
+export interface ScheduleEvent {
+    startMinute: number;
+    startHour: number;
+    fan: FanModeSetting;
+    heatSetpoint: number;
+    coolSetpoint: number;
+}
+
+function emptyScheduleEvent(): ScheduleEvent {
+    return {
+        startMinute: 0,
+        startHour: 0,
+        fan: FanModeSetting.Auto,
+        heatSetpoint: 0,
+        coolSetpoint: 0,
+    };
+}
+
+function writeScheduleEvent(payload: Buffer, offset: number, event: ScheduleEvent): void {
+    payload.writeUint8(event.startMinute ?? 0, offset);
+    payload.writeUint8(event.startHour ?? 0, offset + 1);
+    payload.writeUint8(event.fan ?? FanModeSetting.Auto, offset + 2);
+    payload.writeUint8(event.heatSetpoint ? convertTemperatureToByte(event.heatSetpoint) : 0, offset + 3);
+    payload.writeUint8(event.coolSetpoint ? convertTemperatureToByte(event.coolSetpoint) : 0, offset + 4);
+}
+
+function readScheduleEvent(payload: Buffer, offset: number): ScheduleEvent {
+    return {
+        startMinute: payload.readUint8(offset),
+        startHour: payload.readUint8(offset + 1),
+        fan: payload.readUint8(offset + 2),
+        heatSetpoint: convertByteToTemperature(payload.readUint8(offset + 3)),
+        coolSetpoint: convertByteToTemperature(payload.readUint8(offset + 4)),
+    };
+}
+
+/**
+ * Read Schedule Day — 1-byte selector (0–6 Sunday–Saturday).
+ * Wiki: Read Request data is required; weekdays/weekend/all-days are write-only.
+ */
+export class ScheduleDayReadRequest extends BasePayloadRequest {
+    day: ScheduleDayIndex = ScheduleDayIndex.Sunday;
+
+    constructor(day: ScheduleDayIndex = ScheduleDayIndex.Sunday) {
+        super(FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleDay);
+        this.day = day;
+    }
+
+    toReadBuffer(): Buffer {
+        return Buffer.from([this.day]);
+    }
+}
+
+/**
+ * Write Schedule Day — 21 bytes: day + four 5-byte events (Wake, Leave, Return, Sleep).
+ * Deadband violations NACK (unlike Setpoint & Mode, which auto-corrects).
+ */
+export class ScheduleDayRequest extends BasePayloadRequest {
+    day: ScheduleDayIndex = ScheduleDayIndex.Sunday;
+    wake: ScheduleEvent = emptyScheduleEvent();
+    leave: ScheduleEvent = emptyScheduleEvent();
+    returnHome: ScheduleEvent = emptyScheduleEvent();
+    sleep: ScheduleEvent = emptyScheduleEvent();
+
+    constructor() {
+        super(FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleDay);
+    }
+
+    toBuffer(): Buffer {
+        const payload = Buffer.alloc(21);
+        payload.writeUint8(this.day, 0);
+        writeScheduleEvent(payload, 1, this.wake);
+        writeScheduleEvent(payload, 6, this.leave);
+        writeScheduleEvent(payload, 11, this.returnHome);
+        writeScheduleEvent(payload, 16, this.sleep);
+        return payload;
+    }
+}
+
+export class ScheduleDayResponse extends BasePayloadResponse {
+    day: ScheduleDayIndex;
+    wake: ScheduleEvent;
+    leave: ScheduleEvent;
+    returnHome: ScheduleEvent;
+    sleep: ScheduleEvent;
+
+    constructor(payload: Buffer) {
+        super(payload, FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleDay);
+
+        const data = payload.length >= 21
+            ? payload
+            : Buffer.concat([payload, Buffer.alloc(21 - payload.length)]);
+
+        this.day = data.readUint8(0);
+        this.wake = readScheduleEvent(data, 1);
+        this.leave = readScheduleEvent(data, 6);
+        this.returnHome = readScheduleEvent(data, 11);
+        this.sleep = readScheduleEvent(data, 16);
+    }
+}
 
 export class ScheduleHoldRequest extends BasePayloadRequest {
     hold: HoldType = HoldType.Disabled;

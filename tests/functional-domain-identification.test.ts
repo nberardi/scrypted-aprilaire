@@ -10,6 +10,7 @@ import {
     MacAddressResponse,
     RevisionAndModelResponse,
     sanitizeIdentificationText,
+    ThermostatNameRequest,
     ThermostatNameResponse,
 } from "../src/FunctionalDomainIdentification";
 import {
@@ -117,6 +118,33 @@ describe("Identification domainx", () => {
             expect(sanitizeIdentificationText("Main Floor\0\0\0")).toBe("Main Floor");
             expect(sanitizeIdentificationText(Buffer.alloc(15, 0))).toBe("");
             expect(sanitizeIdentificationText("  Upstairs  ")).toBe("Upstairs");
+        });
+
+        it("writes 24-byte postal+name with NUL padding", () => {
+            const req = new ThermostatNameRequest();
+            req.postalCode = "12345";
+            req.name = "Office";
+            const buf = req.toBuffer();
+            expect(req.attribute).toBe(0x05);
+            expect(buf.length).toBe(24);
+            expect(buf.subarray(0, 5).toString("ascii")).toBe("12345");
+            expect(buf[7]).toBe(0);
+            expect(buf.subarray(8, 14).toString("ascii")).toBe("Office");
+            expect(buf[23]).toBe(0);
+        });
+    });
+
+    describe(" short / unknown payloads", () => {
+        it("MAC parse does not throw on a 6-byte body", () => {
+            const res = new MacAddressResponse(Buffer.from([0xb4, 0x82, 0x55, 0xa5, 0x01, 0x07]));
+            expect(res.macAddress).toBe("b48255a50107");
+            expect(res.forceConnection).toBe(0);
+        });
+
+        it("unknown model numbers stringify instead of returning undefined", () => {
+            expect(new RevisionAndModelResponse(Buffer.from([0x41, 1, 0, 1, 99, 0, 0])).model).toBe(
+                "Unknown (99)"
+            );
         });
     });
 });

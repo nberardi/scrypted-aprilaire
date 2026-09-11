@@ -73,11 +73,14 @@ export function defaultCosSubscriptionFlags(): number[] {
     flags[CosSubscriptionIndex.FreshAirSetting] = 1;
     flags[CosSubscriptionIndex.AirCleaningSettings] = 1;
     flags[CosSubscriptionIndex.ThermostatIAQAvailable] = 1;
+    flags[CosSubscriptionIndex.ScheduleSettings] = 1;
     flags[CosSubscriptionIndex.AwaySettings] = 1;
+    flags[CosSubscriptionIndex.ScheduleDay] = 1;
     flags[CosSubscriptionIndex.ScheduleHold] = 1;
     flags[CosSubscriptionIndex.HeatBlast] = 1;
     flags[CosSubscriptionIndex.ServiceRemindersStatus] = 1;
     flags[CosSubscriptionIndex.AlertsStatus] = 1;
+    flags[CosSubscriptionIndex.AlertsSettings] = 1;
     flags[CosSubscriptionIndex.BacklightSettings] = 1;
     flags[CosSubscriptionIndex.ThermostatLocationAndName] = 1;
     flags[CosSubscriptionIndex.ControllingSensorValues] = 1;
@@ -85,6 +88,7 @@ export function defaultCosSubscriptionFlags(): number[] {
     flags[CosSubscriptionIndex.ThermostatStatus] = 1;
     flags[CosSubscriptionIndex.IAQStatus] = 1;
     flags[CosSubscriptionIndex.ModelAndRevision] = 1;
+    flags[CosSubscriptionIndex.SupportModule] = 1;
     return flags;
 }
 

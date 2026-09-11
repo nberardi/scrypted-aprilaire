@@ -1,5 +1,15 @@
-import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainStatus, FunctionalDomainSetup, FunctionalDomainScheduling, FunctionalDomainAlerts, NAckError } from "./AprilaireClient";
+import { FunctionalDomain, FunctionalDomainAttribute, NAckError } from "./AprilaireClient";
 
+
+/**
+ * Read one payload byte, or `fallback` when the buffer is missing/short.
+ * Thermostat frames vary by model; short COS/read bodies must not throw.
+ */
+export function readPayloadU8(payload: Buffer | undefined, offset: number, fallback: number = 0): number {
+    if (!payload || offset < 0 || offset >= payload.length)
+        return fallback;
+    return payload.readUint8(offset);
+}
 
 export class BasePayloadResponse {
     timestamp = Date.now();
@@ -9,7 +19,7 @@ export class BasePayloadResponse {
     domain: FunctionalDomain;
     attribute: number;
 
-    constructor(payload: Buffer, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainAlerts | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup | number) {
+    constructor(payload: Buffer, domain: FunctionalDomain, attribute: FunctionalDomainAttribute) {
         this.payload = payload;
         this.responseError = ResponseErrorType.NoError;
 

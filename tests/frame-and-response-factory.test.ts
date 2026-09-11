@@ -8,6 +8,7 @@ import {
     Action,
     AprilaireResponsePayload,
     FunctionalDomain,
+    FunctionalDomainAlerts,
     FunctionalDomainControl,
     FunctionalDomainIdentification,
     FunctionalDomainScheduling,
@@ -18,11 +19,12 @@ import {
 } from "../src/AprilaireClient";
 import { NackResponse } from "../src/BasePayloadResponse";
 import { ThermostatSetpointAndModeSettingsResponse } from "../src/FunctionalDomainControl";
-import { ControllingSensorsStatusAndValueResponse, SensorValuesResponse } from "../src/FunctionalDomainSensors";
-import { ScheduleHoldResponse } from "../src/FunctionalDomainScheduling";
+import { ControllingSensorsStatusAndValueResponse, SensorValuesResponse, SupportModulesResponse } from "../src/FunctionalDomainSensors";
+import { ScheduleDayResponse, ScheduleHoldResponse, ScheduleSettingsResponse } from "../src/FunctionalDomainScheduling";
 import { CosResponse, ThermostatErrorResponse } from "../src/FunctionalDomainStatus";
 import { MacAddressResponse } from "../src/FunctionalDomainIdentification";
 import { DateAndTimeResponse } from "../src/FunctionalDomainSetup";
+import { AlertsSettingsResponse } from "../src/FunctionalDomainAlerts";
 import {
     GUIDE_EXAMPLE_NACK_OOR,
     GuideAction,
@@ -253,6 +255,38 @@ describe("Packet frame & response factory ", () => {
                 0
             );
             expect(write.toObject()).toBeUndefined();
+        });
+
+        it("parses Scheduling/Schedule Settings and Schedule Day", () => {
+            const settings = new AprilaireResponsePayload(
+                "127.0.0.1", 8000, 1, 0, 4, Action.ReadResponse,
+                FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleSettings,
+                Buffer.from([1]), 0
+            );
+            expect(settings.toObject()).toBeInstanceOf(ScheduleSettingsResponse);
+
+            const day = new AprilaireResponsePayload(
+                "127.0.0.1", 8000, 1, 0, 24, Action.COS,
+                FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleDay,
+                Buffer.alloc(21), 0
+            );
+            expect(day.toObject()).toBeInstanceOf(ScheduleDayResponse);
+        });
+
+        it("parses Sensors/Support Modules and Alerts/Alerts Settings", () => {
+            const modules = new AprilaireResponsePayload(
+                "127.0.0.1", 8000, 1, 0, 11, Action.ReadResponse,
+                FunctionalDomain.Sensors, FunctionalDomainSensors.SupportModules,
+                Buffer.alloc(8), 0
+            );
+            expect(modules.toObject()).toBeInstanceOf(SupportModulesResponse);
+
+            const alerts = new AprilaireResponsePayload(
+                "127.0.0.1", 8000, 1, 0, 24, Action.ReadResponse,
+                FunctionalDomain.Alerts, FunctionalDomainAlerts.AlertsSettings,
+                Buffer.alloc(21), 0
+            );
+            expect(alerts.toObject()).toBeInstanceOf(AlertsSettingsResponse);
         });
     });
 
