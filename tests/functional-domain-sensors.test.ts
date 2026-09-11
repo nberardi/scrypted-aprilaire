@@ -19,6 +19,7 @@ import {
     FunctionalDomain,
     FunctionalDomainSensors,
 } from "../src/AprilaireClient";
+import { ResponseErrorType } from "../src/BasePayloadResponse";
 import {
     GuideAttribute,
     GuideDomain,
@@ -96,6 +97,73 @@ describe("Sensors domainx", () => {
             expect(res.outdoorTemperatureStatus).toBe(TemperatureSensorStatus.NotInstalled);
         });
 
+        // A short reply must not invent readings. The two byte roles alternate, so
+        // padding has to respect them: padding every missing byte with NotInstalled
+        // (3) made each absent temperature decode as a plausible 3.0 °C.
+        describe("short payloads pad by byte role", () => {
+            it("reports missing sensors as NotInstalled with a 0 value", () => {
+                const payload = Buffer.from([
+                    TemperatureSensorStatus.NoError,
+                    guideEncodeTemperature(22),
+                    TemperatureSensorStatus.NoError,
+                    guideEncodeTemperature(21),
+                ]);
+                const res = new SensorValuesResponse(payload);
+
+                expect(res.indoorTemperature).toBe(22);
+                expect(res.indoorWiredRemoteTemperature).toBe(21);
+
+                for (const status of [
+                    res.outdoorTemperatureStatus,
+                    res.returningAirTemperatureStatus,
+                    res.leavingAirTemperatureStatus,
+                    res.outdoorWirelessTemperatureStatus,
+                ]) {
+                    expect(status).toBe(TemperatureSensorStatus.NotInstalled);
+                }
+                expect(res.indoorHumidityStatus).toBe(HumiditySensorStatus.NotInstalled);
+                expect(res.outdoorHumidityStatus).toBe(HumiditySensorStatus.NotInstalled);
+            });
+
+            it("never decodes padding as a 3.0 °C reading", () => {
+                const res = new SensorValuesResponse(Buffer.alloc(2));
+                for (const temperature of [
+                    res.outdoorTemperature,
+                    res.returningAirTemperature,
+                    res.leavingAirTemperature,
+                    res.outdoorWirelessTemperature,
+                ]) {
+                    expect(temperature).toBe(0);
+                    expect(temperature).not.toBe(3);
+                }
+                expect(res.indoorHumidity).toBe(0);
+                expect(res.outdoorHumidity).toBe(0);
+            });
+
+            // Padding is honest (the padded status bytes say "no sensor"), so the
+            // response stays usable and the sensors that did arrive are kept.
+            it("stays a usable response rather than an error", () => {
+                const res = new SensorValuesResponse(
+                    Buffer.from([TemperatureSensorStatus.NoError, guideEncodeTemperature(22)])
+                );
+                expect(res.responseError).toBe(ResponseErrorType.NoError);
+                expect(res.indoorTemperatureStatus).toBe(TemperatureSensorStatus.NoError);
+                expect(res.indoorTemperature).toBe(22);
+            });
+
+            it("pads an odd-length payload without dropping the last value byte", () => {
+                const payload = Buffer.from([
+                    TemperatureSensorStatus.NoError,
+                    guideEncodeTemperature(22),
+                    TemperatureSensorStatus.NoError,
+                ]);
+                const res = new SensorValuesResponse(payload);
+                expect(res.indoorWiredRemoteTemperatureStatus).toBe(TemperatureSensorStatus.NoError);
+                expect(res.indoorWiredRemoteTemperature).toBe(0);
+                expect(res.outdoorTemperatureStatus).toBe(TemperatureSensorStatus.NotInstalled);
+            });
+        });
+
         it("maps temperature sensor status codes per protocol", () => {
             expect(TemperatureSensorStatus.NoError).toBe(0);
             expect(TemperatureSensorStatus.OutOfRangeLow).toBe(1);
@@ -160,6 +228,16 @@ describe("Sensors domainx", () => {
                 Buffer.from([OurdoorSensorStatus.TimedOut, 0])
             );
             expect(res.status).toBe(4);
+        });
+
+        it("marks a short controlling-sensor payload malformed with safe defaults", () => {
+            const res = new ControllingSensorsStatusAndValueResponse(
+                Buffer.from([TemperatureSensorStatus.NoError, guideEncodeTemperature(21.5)])
+            );
+            expect(res.responseError).toBe(ResponseErrorType.PayloadMalformed);
+            expect(res.indoorTemperatureStatus).toBe(TemperatureSensorStatus.NotInstalled);
+            expect(res.outdoorTemperatureStatus).toBe(TemperatureSensorStatus.NotInstalled);
+            expect(res.indoorHumidityStatus).toBe(HumiditySensorStatus.NotInstalled);
         });
 
         it("documents <10 minute refresh requirement (protocol)", () => {

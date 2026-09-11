@@ -23,6 +23,7 @@ import {
     FunctionalDomain,
     FunctionalDomainScheduling,
 } from "../src/AprilaireClient";
+import { ResponseErrorType } from "../src/BasePayloadResponse";
 import {
     AWAY_COOL_INDEX_TO_C,
     AWAY_HEAT_INDEX_TO_C,
@@ -265,6 +266,84 @@ describe("Scheduling domainx", () => {
             expect(res.endDate.getMonth()).toBe(2); // JS month 0-based for March
             expect(res.endDate.getDate()).toBe(15);
             expect(res.endDate.getHours()).toBe(12);
+        });
+
+        // Holds without an end date send Null (0) date bytes. Decoding those as
+        // a calendar date yields 31 Dec 1999, which the plugin's hold sync then
+        // re-encodes as day 31 / month 12 / year byte 255 and broadcasts to every
+        // peer thermostat. Null must stay Null all the way around the loop.
+        describe("Null fields round-trip back to Null", () => {
+            it("leaves the end date undefined when the date bytes are Null", () => {
+                const payload = Buffer.from([
+                    HoldType.Permanent,
+                    FanModeSetting.Auto,
+                    guideEncodeTemperature(21),
+                    guideEncodeTemperature(24),
+                    0,          // DEH Null
+                    0, 0, 0, 0, 0, // minute, hour, day, month, year all Null
+                ]);
+                const res = new ScheduleHoldResponse(payload);
+
+                expect(res.hold).toBe(HoldType.Permanent);
+                expect(res.endDate).toBeUndefined();
+                expect(res.dehumidifierSetpoint).toBeUndefined();
+            });
+
+            it("surfaces Null fan and Null setpoints as undefined", () => {
+                const res = new ScheduleHoldResponse(
+                    Buffer.from([HoldType.Disabled, FanModeSetting.Null, 0, 0, 0, 0, 0, 0, 0, 0])
+                );
+
+                expect(res.hold).toBe(HoldType.Disabled);
+                expect(res.fan).toBeUndefined();
+                expect(res.heatSetpoint).toBeUndefined();
+                expect(res.coolSetpoint).toBeUndefined();
+                expect(res.dehumidifierSetpoint).toBeUndefined();
+                expect(res.endDate).toBeUndefined();
+            });
+
+            it("re-encodes a cancelled hold as all zeros, not 31 Dec 1999", () => {
+                const wire = Buffer.from([HoldType.Disabled, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+                const res = new ScheduleHoldResponse(wire);
+
+                const echo = new ScheduleHoldRequest();
+                echo.hold = res.hold;
+                echo.fan = res.fan;
+                echo.heatSetpoint = res.heatSetpoint;
+                echo.coolSetpoint = res.coolSetpoint;
+                echo.dehumidifierSetpoint = res.dehumidifierSetpoint;
+                echo.endDate = res.endDate;
+
+                expect(echo.toBuffer()).toEqual(wire);
+            });
+
+            it("re-encodes a dated hold byte-for-byte", () => {
+                const wire = Buffer.from([
+                    HoldType.Vacation,
+                    FanModeSetting.Auto,
+                    guideEncodeTemperature(18),
+                    guideEncodeTemperature(28),
+                    55,
+                    30, 14, 18, 7, 26, // 2026-07-18 14:30
+                ]);
+                const res = new ScheduleHoldResponse(wire);
+
+                const echo = new ScheduleHoldRequest();
+                echo.hold = res.hold;
+                echo.fan = res.fan;
+                echo.heatSetpoint = res.heatSetpoint;
+                echo.coolSetpoint = res.coolSetpoint;
+                echo.dehumidifierSetpoint = res.dehumidifierSetpoint;
+                echo.endDate = res.endDate;
+
+                expect(echo.toBuffer()).toEqual(wire);
+            });
+        });
+
+        it("marks a short hold payload malformed instead of throwing", () => {
+            const res = new ScheduleHoldResponse(Buffer.from([HoldType.Temporary, FanModeSetting.Auto]));
+            expect(res.responseError).toBe(ResponseErrorType.PayloadMalformed);
+            expect(res.endDate).toBeUndefined();
         });
     });
 

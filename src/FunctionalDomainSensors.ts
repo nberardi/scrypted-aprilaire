@@ -40,6 +40,8 @@ export class SensorValuesRequest extends BasePayloadRequest {
  * | 12–13 | Wireless outdoor temperature |
  * | 14–15 | Wireless outdoor humidity |
  */
+export const SENSOR_VALUES_BYTE_COUNT = 16;
+
 export class SensorValuesResponse extends BasePayloadResponse {
     indoorTemperatureStatus: TemperatureSensorStatus;
     indoorTemperature: number;
@@ -60,11 +62,23 @@ export class SensorValuesResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Sensors, FunctionalDomainSensors.SensorValues);
 
-        // Guide: 16 status/value bytes. Pad short payloads so partial replies still parse
-        // (remaining sensors default to NotInstalled / 0) rather than throwing.
-        const data = payload.length >= 16
-            ? payload
-            : Buffer.concat([payload, Buffer.alloc(16 - payload.length, TemperatureSensorStatus.NotInstalled)]);
+        // Guide: 16 status/value bytes. Pad short payloads so partial replies still
+        // parse rather than throwing. Padding must distinguish the two byte roles:
+        // status bytes become NotInstalled (so consumers reject them) while value
+        // bytes become 0. Filling both with NotInstalled (3) used to decode as a
+        // plausible 3.0 °C reading on every missing sensor.
+        // Padding keeps this a usable response rather than an error: the padded
+        // status bytes truthfully report "no sensor", so consumers reject exactly
+        // the sensors that were missing from the reply.
+        let data = payload;
+        if (payload.length < SENSOR_VALUES_BYTE_COUNT) {
+            data = Buffer.alloc(SENSOR_VALUES_BYTE_COUNT);
+            payload.copy(data);
+            for (let offset = payload.length; offset < SENSOR_VALUES_BYTE_COUNT; offset++) {
+                const isStatusByte = offset % 2 === 0;
+                data.writeUint8(isStatusByte ? TemperatureSensorStatus.NotInstalled : 0, offset);
+            }
+        }
 
         this.indoorTemperatureStatus = data.readUint8(0);
         this.indoorTemperature = convertByteToTemperature(data.readUint8(1));
@@ -86,7 +100,8 @@ export class SensorValuesResponse extends BasePayloadResponse {
 }
 
 export class WrittenOutdoorTemperatureValueRequest extends BasePayloadRequest {
-    temperature: number = 0;
+    /** Undefined leaves the value unchanged (Null on the wire). */
+    temperature?: number;
     constructor() {
         super(FunctionalDomain.Sensors, FunctionalDomainSensors.WrittenOutdoorTemperatureValue);
     }
@@ -94,7 +109,14 @@ export class WrittenOutdoorTemperatureValueRequest extends BasePayloadRequest {
     toBuffer(): Buffer {
         let payload = Buffer.alloc(2);
         payload.writeUint8(0, 0); // sensor status must be 0 for writes
-        payload.writeUint8(this.temperature ? convertTemperatureToByte(this.temperature) : 0, 1);
+        // 0 °C and Null share byte 0x00 on the wire, so treat only an absent value
+        // as unset and let a real 0 °C reading go through the encoder.
+        payload.writeUint8(
+            this.temperature === undefined || this.temperature === null
+                ? 0
+                : convertTemperatureToByte(this.temperature),
+            1
+        );
         return payload;
     }
 }
@@ -105,10 +127,8 @@ export class WrittenOutdoorTemperatureValueResponse extends BasePayloadResponse 
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Sensors, FunctionalDomainSensors.WrittenOutdoorTemperatureValue);
 
-        if (payload.length === 0) {
-            this.responseError = ResponseErrorType.NoPayloadReceived;
+        if (!this.hasRequiredLength(2))
             return;
-        }
 
         this.status = payload.readUint8(0);
         this.temperature = convertByteToTemperature(payload.readUint8(1));
@@ -122,16 +142,21 @@ export class ControllingSensorsStatusAndValueRequest extends BasePayloadRequest 
 }
 
 export class ControllingSensorsStatusAndValueResponse extends BasePayloadResponse {
-    indoorTemperatureStatus: TemperatureSensorStatus;
-    indoorTemperature: number;
-    outdoorTemperatureStatus: TemperatureSensorStatus;
-    outdoorTemperature: number;
-    indoorHumidityStatus: HumiditySensorStatus;
-    indoorHumidity: number;
-    outdoorHumidityStatus: HumiditySensorStatus;
-    outdoorHumidity: number;
+    // Default to NotInstalled so a truncated payload reads as "no sensor" rather
+    // than an undefined status that consumers would log as a hardware fault.
+    indoorTemperatureStatus: TemperatureSensorStatus = TemperatureSensorStatus.NotInstalled;
+    indoorTemperature: number = 0;
+    outdoorTemperatureStatus: TemperatureSensorStatus = TemperatureSensorStatus.NotInstalled;
+    outdoorTemperature: number = 0;
+    indoorHumidityStatus: HumiditySensorStatus = HumiditySensorStatus.NotInstalled;
+    indoorHumidity: number = 0;
+    outdoorHumidityStatus: HumiditySensorStatus = HumiditySensorStatus.NotInstalled;
+    outdoorHumidity: number = 0;
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Sensors, FunctionalDomainSensors.ControllingSensorValues);
+
+        if (!this.hasRequiredLength(8))
+            return;
 
         this.indoorTemperatureStatus = payload.readUint8(0);
         this.indoorTemperature = convertByteToTemperature(payload.readUint8(1));

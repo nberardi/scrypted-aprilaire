@@ -29,6 +29,9 @@ export class ServiceRemindersStatusResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Alerts, FunctionalDomainAlerts.ServiceRemindersStatus);
 
+        if (!this.hasRequiredLength(10))
+            return;
+
         this.hvac = Boolean(payload.readUint8(0));
         this.airFilter = Boolean(payload.readUint8(1));
         this.waterPanel = Boolean(payload.readUint8(2));
@@ -57,6 +60,9 @@ export class AlertsStatusResponse extends BasePayloadResponse {
     updateComplete: AlertStatus;
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Alerts, FunctionalDomainAlerts.AlertsStatus);
+
+        if (!this.hasRequiredLength(13))
+            return;
 
         this.indoorTemperature = payload.readUint8(0);
         this.indoorHumidity = payload.readUint8(1);

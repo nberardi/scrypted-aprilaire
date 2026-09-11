@@ -85,6 +85,9 @@ export class ThermostatSetpointAndModeSettingsResponse extends BasePayloadRespon
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Control, FunctionalDomainControl.ThermstateSetpointAndModeSettings);
 
+        if (!this.hasRequiredLength(4))
+            return;
+
         this.mode = payload.readUint8(0);
         this.fan = payload.readUint8(1);
         this.heatSetpoint = convertByteToTemperature(payload.readUint8(2));
@@ -111,6 +114,45 @@ export class ThermostatSetpointAndModeSettingsRequest extends BasePayloadRequest
     }
 }
 
+/** §2.3 writable %RH window; 0 is Off and 1–39 / 91–255 are reserved. */
+export const DEHUMIDIFICATION_SETPOINT_MIN = 40;
+export const DEHUMIDIFICATION_SETPOINT_MAX = 90;
+/** Used only when the thermostat has not yet reported a setpoint to turn on with. */
+export const DEHUMIDIFICATION_SETPOINT_FALLBACK = 50;
+
+/** §2.4 manual %RH window; 0 is Off, 1–7 is the Auto window, 8–9 / 51–255 reserved. */
+export const HUMIDIFICATION_SETPOINT_MIN = 10;
+export const HUMIDIFICATION_SETPOINT_MAX = 50;
+export const HUMIDIFICATION_AUTO_SETPOINT_MIN = 1;
+export const HUMIDIFICATION_AUTO_SETPOINT_MAX = 7;
+/** Used only when the thermostat has not yet reported a setpoint to turn on with. */
+export const HUMIDIFICATION_SETPOINT_FALLBACK = 35;
+
+/**
+ * Resolve the single wire byte for an IAQ humidity setpoint write.
+ *
+ * §2.3 / §2.4 carry on/off *in the setpoint value itself* — 0 means Off. So a
+ * request with `on = true` but no known setpoint would serialize to 0 and turn
+ * the equipment off, which is what happens when a user hits On before the first
+ * COS setpoint arrives. Clamp into the writable window instead; a value outside
+ * it is NACKed as out of range (0x10) and would be dropped anyway.
+ */
+function resolveHumiditySetpointByte(
+    on: boolean,
+    setpoint: number | undefined,
+    min: number,
+    max: number,
+    fallback: number
+): number {
+    if (!on)
+        return 0;
+
+    if (setpoint === undefined || setpoint === null || !Number.isFinite(setpoint) || setpoint <= 0)
+        return fallback;
+
+    return Math.min(max, Math.max(min, Math.round(setpoint)));
+}
+
 export class DehumidificationSetpointRequest extends BasePayloadRequest {
     on: boolean;
     dehumidificationSetpoint: number;
@@ -120,7 +162,13 @@ export class DehumidificationSetpointRequest extends BasePayloadRequest {
 
     toBuffer(): Buffer {
         let payload = Buffer.alloc(1);
-        payload.writeUint8(this.on ? this.dehumidificationSetpoint : 0, 0)
+        payload.writeUint8(resolveHumiditySetpointByte(
+            this.on,
+            this.dehumidificationSetpoint,
+            DEHUMIDIFICATION_SETPOINT_MIN,
+            DEHUMIDIFICATION_SETPOINT_MAX,
+            DEHUMIDIFICATION_SETPOINT_FALLBACK
+        ), 0);
         return payload;
     }
 }
@@ -128,13 +176,33 @@ export class DehumidificationSetpointRequest extends BasePayloadRequest {
 export class HumidificationSetpointRequest extends BasePayloadRequest {
     on: boolean;
     humidificationSetpoint: number;
+    /**
+     * True when the thermostat reports humidification in Auto
+     * ({@link HumidificationState.Auto}), whose setpoint window is 1–7 rather
+     * than the manual 10–50 %RH.
+     */
+    auto: boolean = false;
     constructor() {
         super(FunctionalDomain.Control, FunctionalDomainControl.HumidificationSetpoint);
     }
 
     toBuffer(): Buffer {
         let payload = Buffer.alloc(1);
-        payload.writeUint8(this.on ? this.humidificationSetpoint : 0, 0)
+        payload.writeUint8(this.auto
+            ? resolveHumiditySetpointByte(
+                this.on,
+                this.humidificationSetpoint,
+                HUMIDIFICATION_AUTO_SETPOINT_MIN,
+                HUMIDIFICATION_AUTO_SETPOINT_MAX,
+                HUMIDIFICATION_AUTO_SETPOINT_MAX
+            )
+            : resolveHumiditySetpointByte(
+                this.on,
+                this.humidificationSetpoint,
+                HUMIDIFICATION_SETPOINT_MIN,
+                HUMIDIFICATION_SETPOINT_MAX,
+                HUMIDIFICATION_SETPOINT_FALLBACK
+            ), 0);
         return payload;
     }
 }
@@ -144,6 +212,9 @@ export class DehumidificationSetpointResponse extends BasePayloadResponse {
     dehumidificationSetpoint: number;
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Control, FunctionalDomainControl.DehumidificationSetpoint);
+
+        if (!this.hasRequiredLength(1))
+            return;
 
         this.on = payload.readUint8(0) !== 0;
         this.dehumidificationSetpoint = payload.readUint8(0);
@@ -156,6 +227,9 @@ export class HumidificationSetpointResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Control, FunctionalDomainControl.HumidificationSetpoint);
 
+        if (!this.hasRequiredLength(1))
+            return;
+
         this.on = payload.readUint8(0) !== 0;
         this.humidificationSetpoint = payload.readUint8(0);
     }
@@ -166,6 +240,9 @@ export class FreshAirSettingsResponse extends BasePayloadResponse {
     event: FreshAirEvent;
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Control, FunctionalDomainControl.FreshAirSetting);
+
+        if (!this.hasRequiredLength(2))
+            return;
 
         this.mode = payload.readUint8(0);
         this.event = payload.readUint8(1);
@@ -178,25 +255,36 @@ export class AirCleaningSettingsResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Control, FunctionalDomainControl.AirCleaningSetting);
 
+        if (!this.hasRequiredLength(2))
+            return;
+
         this.mode = payload.readUint8(0);
         this.event = payload.readUint8(1);
     }
 }
 
+/** §2.7 availability bytes: 0 = No, 1 = Yes, 2–255 reserved. */
+const IAQ_AVAILABLE_YES = 1;
+
 export class ThermostatAndIAQAvailableResponse extends BasePayloadResponse {
     thermostat: ThermostatCapabilities;
-    airCleaning: boolean;
-    freshAirVentilation: boolean;
-    dehumidification: boolean;
-    humidification: HumidificationState;
+    airCleaning: boolean = false;
+    freshAirVentilation: boolean = false;
+    dehumidification: boolean = false;
+    humidification: HumidificationState = HumidificationState.NotAvailable;
 
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
 
+        if (!this.hasRequiredLength(5))
+            return;
+
         this.thermostat = payload.readUint8(0);
-        this.airCleaning = Boolean(payload.readUint8(1));
-        this.freshAirVentilation = Boolean(payload.readUint8(2));
-        this.dehumidification = Boolean(payload.readUint8(3));
+        // Only the documented value 1 means "installed". Treating every non-zero
+        // byte as Yes would publish IAQ devices from reserved values.
+        this.airCleaning = payload.readUint8(1) === IAQ_AVAILABLE_YES;
+        this.freshAirVentilation = payload.readUint8(2) === IAQ_AVAILABLE_YES;
+        this.dehumidification = payload.readUint8(3) === IAQ_AVAILABLE_YES;
         this.humidification = payload.readUint8(4);
     }
 }

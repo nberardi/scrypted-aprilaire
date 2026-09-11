@@ -4,10 +4,18 @@
 import { describe, expect, it } from "vitest";
 import {
     AirCleaningSettingsResponse,
+    DEHUMIDIFICATION_SETPOINT_FALLBACK,
+    DEHUMIDIFICATION_SETPOINT_MAX,
+    DEHUMIDIFICATION_SETPOINT_MIN,
     DehumidificationSetpointRequest,
     DehumidificationSetpointResponse,
     FanModeSetting,
     FreshAirSettingsResponse,
+    HUMIDIFICATION_AUTO_SETPOINT_MAX,
+    HUMIDIFICATION_AUTO_SETPOINT_MIN,
+    HUMIDIFICATION_SETPOINT_FALLBACK,
+    HUMIDIFICATION_SETPOINT_MAX,
+    HUMIDIFICATION_SETPOINT_MIN,
     HumidificationSetpointRequest,
     HumidificationSetpointResponse,
     HumidificationState,
@@ -18,6 +26,7 @@ import {
     ThermostatSetpointAndModeSettingsResponse,
     enforceDeadband,
 } from "../src/FunctionalDomainControl";
+import { ResponseErrorType } from "../src/BasePayloadResponse";
 import {
     DEFAULT_DEADBAND_C,
     deadbandIndexToCelsius,
@@ -299,6 +308,124 @@ describe("Control domainx", () => {
                 expect(result.adjusted).toBe(c.expectAdjusted);
                 expect(result.coolSetpoint - result.heatSetpoint).toBeGreaterThanOrEqual(c.deadband);
             }
+        });
+    });
+
+    // §2.7 defines 0 = No and 1 = Yes; 2–255 are reserved. Treating any non-zero
+    // byte as Yes publishes IAQ child devices from values the guide does not define.
+    describe(" Thermostat & IAQ Available reserved values", () => {
+        const availability = (airCleaning: number, freshAir: number, dehumidification: number) =>
+            new ThermostatAndIAQAvailableResponse(
+                Buffer.from([
+                    ThermostatCapabilities.HeatAndCool,
+                    airCleaning,
+                    freshAir,
+                    dehumidification,
+                    HumidificationState.NotAvailable,
+                ])
+            );
+
+        it("reports installed only for the documented value 1", () => {
+            const res = availability(1, 1, 1);
+            expect(res.airCleaning).toBe(true);
+            expect(res.freshAirVentilation).toBe(true);
+            expect(res.dehumidification).toBe(true);
+        });
+
+        it("reports not installed for 0", () => {
+            const res = availability(0, 0, 0);
+            expect(res.airCleaning).toBe(false);
+            expect(res.freshAirVentilation).toBe(false);
+            expect(res.dehumidification).toBe(false);
+        });
+
+        it("rejects reserved values 2–255 rather than treating them as Yes", () => {
+            for (const reserved of [2, 3, 15, 128, 255]) {
+                const res = availability(reserved, reserved, reserved);
+                expect(res.airCleaning).toBe(false);
+                expect(res.freshAirVentilation).toBe(false);
+                expect(res.dehumidification).toBe(false);
+            }
+        });
+
+        it("marks a short availability payload malformed instead of throwing", () => {
+            const res = new ThermostatAndIAQAvailableResponse(Buffer.from([ThermostatCapabilities.Heat, 1]));
+            expect(res.responseError).toBe(ResponseErrorType.PayloadMalformed);
+            expect(res.humidification).toBe(HumidificationState.NotAvailable);
+        });
+    });
+
+    // §2.3 / §2.4 carry on/off in the setpoint value itself, so "turn on" with no
+    // known setpoint would serialize to 0 — the byte that means Off.
+    describe(" IAQ humidity setpoint on/off encoding", () => {
+        describe("dehumidification (§2.3, window 40–90)", () => {
+            const encode = (on: boolean, setpoint?: number) => {
+                const req = new DehumidificationSetpointRequest();
+                req.on = on;
+                req.dehumidificationSetpoint = setpoint as number;
+                return req.toBuffer()[0];
+            };
+
+            it("writes 0 for off regardless of the setpoint", () => {
+                expect(encode(false, 55)).toBe(0);
+                expect(encode(false)).toBe(0);
+            });
+
+            it("writes the setpoint when on and known", () => {
+                expect(encode(true, 55)).toBe(55);
+                expect(encode(true, DEHUMIDIFICATION_SETPOINT_MIN)).toBe(40);
+                expect(encode(true, DEHUMIDIFICATION_SETPOINT_MAX)).toBe(90);
+            });
+
+            it("falls back into the window when on with no known setpoint", () => {
+                for (const unknown of [undefined, 0, NaN]) {
+                    const byte = encode(true, unknown);
+                    expect(byte).toBe(DEHUMIDIFICATION_SETPOINT_FALLBACK);
+                    expect(byte).not.toBe(0);
+                }
+            });
+
+            it("clamps into the writable window instead of sending a NACK-able byte", () => {
+                expect(encode(true, 5)).toBe(DEHUMIDIFICATION_SETPOINT_MIN);
+                expect(encode(true, 99)).toBe(DEHUMIDIFICATION_SETPOINT_MAX);
+            });
+        });
+
+        describe("humidification (§2.4, manual 10–50 / auto 1–7)", () => {
+            const encode = (on: boolean, setpoint?: number, auto = false) => {
+                const req = new HumidificationSetpointRequest();
+                req.on = on;
+                req.humidificationSetpoint = setpoint as number;
+                req.auto = auto;
+                return req.toBuffer()[0];
+            };
+
+            it("writes 0 for off", () => {
+                expect(encode(false, 35)).toBe(0);
+                expect(encode(false, 5, true)).toBe(0);
+            });
+
+            it("uses the manual window when humidification is not in Auto", () => {
+                expect(encode(true, 35)).toBe(35);
+                expect(encode(true, 3)).toBe(HUMIDIFICATION_SETPOINT_MIN);
+                expect(encode(true, 80)).toBe(HUMIDIFICATION_SETPOINT_MAX);
+                expect(encode(true, undefined)).toBe(HUMIDIFICATION_SETPOINT_FALLBACK);
+            });
+
+            it("uses the 1–7 Auto window when the thermostat reports Auto", () => {
+                expect(encode(true, 4, true)).toBe(4);
+                expect(encode(true, 35, true)).toBe(HUMIDIFICATION_AUTO_SETPOINT_MAX);
+                expect(encode(true, undefined, true)).toBe(HUMIDIFICATION_AUTO_SETPOINT_MAX);
+                expect(encode(true, 0, true)).toBeGreaterThanOrEqual(HUMIDIFICATION_AUTO_SETPOINT_MIN);
+            });
+
+            it("never serializes On as the Off byte", () => {
+                for (const auto of [false, true]) {
+                    for (const setpoint of [undefined, 0, -5, NaN, 1000]) {
+                        expect(encode(true, setpoint, auto)).not.toBe(0);
+                    }
+                }
+            });
         });
     });
 });

@@ -155,11 +155,31 @@ export class CosResponse extends BasePayloadResponse {
     }
 }
 
+/**
+ * COS emitted when a Sync dump finishes (§7.2 byte 0 = 1).
+ */
 export class SyncResponse extends BasePayloadResponse {
+    /** True once the thermostat has flushed every subscribed COS message. */
+    complete: boolean = false;
+
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Status, FunctionalDomainStatus.Sync);
+
+        if (!this.hasRequiredLength(1))
+            return;
+
+        this.complete = payload.readUint8(0) === 1;
     }
 }
+
+/**
+ * Write Status/Sync — the connect-time state dump that replaces individual reads.
+ *
+ * §7.2 defines a **2-byte** payload (start flag + reserved). A 1-byte write is
+ * rejected with NACK 0x13 (incorrect write payload size) on firmware that
+ * validates length, which would silently disable the whole COS bootstrap.
+ */
+export const SYNC_PAYLOAD_BYTE_COUNT = 2;
 
 export class SyncRequest extends BasePayloadRequest {
     constructor() {
@@ -167,8 +187,9 @@ export class SyncRequest extends BasePayloadRequest {
     }
 
     toBuffer(): Buffer {
-        const payload = Buffer.alloc(1);
-        payload.writeUInt8(1);
+        const payload = Buffer.alloc(SYNC_PAYLOAD_BYTE_COUNT);
+        payload.writeUInt8(1, 0); // start sync
+        payload.writeUInt8(0, 1); // reserved
         return payload;
     }
 }
@@ -181,6 +202,9 @@ export class ThermostatStatusResponse extends BasePayloadResponse {
 
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Status, FunctionalDomainStatus.ThermostatStatus);
+
+        if (!this.hasRequiredLength(4))
+            return;
 
         this.heating = payload.readUint8(0);
         this.cooling = payload.readUint8(1);
@@ -242,6 +266,9 @@ export class IAQStatusResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Status, FunctionalDomainStatus.IAQStatus);
 
+        if (!this.hasRequiredLength(4))
+            return;
+
         this.dehumidification = payload.readUint8(0);
         this.humidification = payload.readUint8(1);
         this.ventilation = payload.readUint8(2);
@@ -282,12 +309,29 @@ export enum AirCleaningStatus {
 }
 
 export class ThermostatErrorResponse extends BasePayloadResponse {
-    thermostatError: ThermostatError;
+    thermostatError: ThermostatError = ThermostatError.NoError;
 
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Status, FunctionalDomainStatus.ThermostatError);
 
+        if (!this.hasRequiredLength(1))
+            return;
+
         this.thermostatError = payload.readUint8(0);
+    }
+}
+
+/** Read Status/Thermostat Error (§7.8). Also delivered by COS and the Sync dump. */
+export class ThermostatErrorRequest extends BasePayloadRequest {
+    constructor() {
+        super(FunctionalDomain.Status, FunctionalDomainStatus.ThermostatError);
+    }
+}
+
+/** Read Status/IAQ Status (§7.7) when COS/Sync has not yet supplied it. */
+export class IAQStatusRequest extends BasePayloadRequest {
+    constructor() {
+        super(FunctionalDomain.Status, FunctionalDomainStatus.IAQStatus);
     }
 }
 
@@ -303,10 +347,13 @@ export enum ThermostatError {
 }
 
 export class OfflineResponse extends BasePayloadResponse {
-    offline: boolean;
+    offline: boolean = false;
 
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Status, FunctionalDomainStatus.Offline);
+
+        if (!this.hasRequiredLength(1))
+            return;
 
         this.offline = payload.readUint8(0) === 1;
     }

@@ -1,6 +1,6 @@
 import { HumidityMode, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, FanMode, Refresh, ThermostatMode } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
-import { BasePayloadResponse } from "./BasePayloadResponse";
+import { BasePayloadResponse, ResponseErrorType } from "./BasePayloadResponse";
 import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
 import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus, ControllingSensorsStatusAndValueRequest, SensorValuesRequest, SensorValuesResponse } from './FunctionalDomainSensors';
 import { OfflineResponse, ThermostatStatusRequest } from './FunctionalDomainStatus';
@@ -65,7 +65,32 @@ export class AprilaireThermostatBase extends ScryptedDeviceBase implements Onlin
         this.console.warn("refreshing", refreshInterface, userInitiated);
     }
 
+    /**
+     * True when a response parsed cleanly enough to publish device state.
+     *
+     * A truncated or empty payload leaves a response holding only its class
+     * defaults; treating those as readings would publish fabricated state (for
+     * example an empty Status/Offline frame reading as "online"). Subclasses call
+     * this before their own `processResponse` work.
+     */
+    protected isUsableResponse(response: BasePayloadResponse): boolean {
+        if (!response)
+            return false;
+
+        if (response.responseError !== ResponseErrorType.NoError) {
+            this.console.warn(
+                `discarding ${response.constructor.name}: ${ResponseErrorType[response.responseError] ?? response.responseError}`
+            );
+            return false;
+        }
+
+        return true;
+    }
+
     processResponse(response: BasePayloadResponse) {
+        if (!this.isUsableResponse(response))
+            return;
+
         this.last.set(response.constructor.name, response);
 
         if (response instanceof ControllingSensorsStatusAndValueResponse || response instanceof SensorValuesResponse) {

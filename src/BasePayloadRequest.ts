@@ -1,10 +1,10 @@
-import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainStatus, FunctionalDomainSetup, FunctionalDomainScheduling } from "./AprilaireClient";
+import { FunctionalDomain, FunctionalDomainAttribute } from "./AprilaireClient";
 
 
 export class BasePayloadRequest {
     domain: FunctionalDomain;
-    attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup;
-    constructor(domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
+    attribute: FunctionalDomainAttribute;
+    constructor(domain: FunctionalDomain, attribute: FunctionalDomainAttribute) {
         this.domain = domain;
         this.attribute = attribute;
     }

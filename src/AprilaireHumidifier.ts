@@ -1,7 +1,7 @@
 import { Fan, FanState, FilterMaintenance, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, HumiditySettingStatus, OnOff } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
 import { AprilaireSystemType, AprilaireThermostatBase } from './AprilaireThermostatBase';
-import { HumidificationSetpointRequest, HumidificationSetpointResponse, ThermostatAndIAQAvailableResponse } from './FunctionalDomainControl';
+import { HumidificationSetpointRequest, HumidificationSetpointResponse, HumidificationState, ThermostatAndIAQAvailableResponse } from './FunctionalDomainControl';
 import { DehumidificationStatus, HumidificationStatus, IAQStatusResponse } from './FunctionalDomainStatus';
 import { BasePayloadResponse } from './BasePayloadResponse';
 import { ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
@@ -19,11 +19,21 @@ export class AprilaireHumidifier extends AprilaireThermostatBase implements OnOf
         return this.turnOn();
     }
 
+    /**
+     * Auto humidification (§2.4) uses the 1–7 setpoint window instead of
+     * 10–50 %RH, so every write has to declare which window it is using.
+     */
+    private buildSetpointRequest(): HumidificationSetpointRequest {
+        const request = new HumidificationSetpointRequest();
+        request.auto = this.client.system?.humidification === HumidificationState.Auto;
+        return request;
+    }
+
     async turnOff(): Promise<void> {
         this.on = false;
         this.fan = { speed: 0 };
 
-        let hrequest = new HumidificationSetpointRequest();
+        let hrequest = this.buildSetpointRequest();
         hrequest.on = false;
         this.client.write(hrequest);
     }
@@ -32,14 +42,14 @@ export class AprilaireHumidifier extends AprilaireThermostatBase implements OnOf
         this.on = true;
         this.fan = { speed: 1 };
 
-        let hrequest = new HumidificationSetpointRequest();
+        let hrequest = this.buildSetpointRequest();
         hrequest.on = true;
         hrequest.humidificationSetpoint = this.humiditySetting?.humidifierSetpoint ?? 0;
         this.client.write(hrequest);
     }
 
     async setHumidity(humidity: HumidityCommand): Promise<void> {
-        let hrequest = new HumidificationSetpointRequest();
+        let hrequest = this.buildSetpointRequest();
 
         hrequest.humidificationSetpoint =
             humidity.humidifierSetpoint ?? this.humiditySetting?.humidifierSetpoint ?? 0;
@@ -66,6 +76,9 @@ export class AprilaireHumidifier extends AprilaireThermostatBase implements OnOf
     }
 
     processResponse(response: BasePayloadResponse) {
+        if (!this.isUsableResponse(response))
+            return;
+
         let humiditySetting: HumiditySettingStatus = JSON.parse(JSON.stringify(this.humiditySetting));
 
         if (response instanceof ServiceRemindersStatusResponse) {
