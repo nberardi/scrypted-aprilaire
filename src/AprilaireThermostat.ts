@@ -478,7 +478,8 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
     }
 
     processResponse(response: BasePayloadResponse) {
-        let fan: FanStatus = JSON.parse(JSON.stringify(this.fan));
+        if (!this.isUsableResponse(response))
+            return;
 
         var tempSettings = { ...this.temperatureSetting };
         var fanSettings = { ...this.fan };

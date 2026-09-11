@@ -18,13 +18,16 @@ import { FanModeSetting } from "./FunctionalDomainControl";
 *
 */
 
+/** §3.4 payload: hold, fan, heat, cool, DEH, minute, hour, day, month, year−2000. */
+export const SCHEDULE_HOLD_BYTE_COUNT = 10;
+
 export class ScheduleHoldRequest extends BasePayloadRequest {
     hold: HoldType = HoldType.Disabled;
-    fan: FanModeSetting;
-    heatSetpoint: number;
-    coolSetpoint: number;
-    dehumidifierSetpoint: number;
-    endDate: Date;
+    fan?: FanModeSetting;
+    heatSetpoint?: number;
+    coolSetpoint?: number;
+    dehumidifierSetpoint?: number;
+    endDate?: Date;
     constructor() {
         super(FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleHold);
     }
@@ -36,7 +39,7 @@ export class ScheduleHoldRequest extends BasePayloadRequest {
     toBuffer(): Buffer {
         const endDate = this.endDate;
 
-        const payload = Buffer.alloc(10);
+        const payload = Buffer.alloc(SCHEDULE_HOLD_BYTE_COUNT);
         payload.writeUint8(this.hold ?? HoldType.Disabled, 0);
         payload.writeUint8(this.fan ?? 0, 1);
         // 0 on the wire = Null (do not modify) when the field is omitted
@@ -47,35 +50,71 @@ export class ScheduleHoldRequest extends BasePayloadRequest {
         payload.writeUint8(endDate?.getHours() ?? 0, 6);
         payload.writeUint8(endDate?.getDate() ?? 0, 7);              // day of month 1–31
         payload.writeUint8(endDate ? endDate.getMonth() + 1 : 0, 8); // month 1–12
-        payload.writeUint8(endDate ? endDate.getFullYear() - 2000 : 0, 9);
+        // The wire carries year − 2000 in one byte; keep it in range so a bad
+        // Date cannot throw out of a write path.
+        payload.writeUint8(
+            endDate ? Math.min(255, Math.max(0, endDate.getFullYear() - 2000)) : 0,
+            9
+        );
         return payload;
     }
 }
 
+/**
+ * Schedule Hold read/COS (§3.4).
+ *
+ * Every field except the hold type may arrive as Null (0): Disabled, Permanent
+ * and Away holds carry no end date, and setpoints are Null when the hold does
+ * not override them. Null fields are surfaced as `undefined` so they round-trip
+ * back to Null on a write.
+ *
+ * Decoding Null date bytes as a calendar date produced `new Date(2000, -1, 0)` —
+ * 31 Dec 1999 — which the plugin's multi-thermostat hold sync then re-encoded as
+ * day 31 / month 12 / year byte 255, broadcasting a wire-invalid end date to
+ * every peer thermostat.
+ */
 export class ScheduleHoldResponse extends BasePayloadResponse {
-    hold: HoldType;
-    fan: FanModeSetting;
-    heatSetpoint: number;
-    coolSetpoint: number ;
-    dehumidifierSetpoint: number;
-    endDate: Date;
+    hold: HoldType = HoldType.Disabled;
+    /** Undefined when the wire field is Null (do not modify). */
+    fan?: FanModeSetting;
+    heatSetpoint?: number;
+    coolSetpoint?: number;
+    dehumidifierSetpoint?: number;
+    /** Undefined for holds without an end time (Disabled / Permanent / Away). */
+    endDate?: Date;
+
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Scheduling, FunctionalDomainScheduling.ScheduleHold);
 
+        if (!this.hasRequiredLength(SCHEDULE_HOLD_BYTE_COUNT))
+            return;
+
         this.hold = payload.readUint8(0);
-        this.fan = payload.readUint8(1);
-        this.heatSetpoint = convertByteToTemperature(payload.readUint8(2));
-        this.coolSetpoint = convertByteToTemperature(payload.readUint8(3));
-        this.dehumidifierSetpoint = payload.readUint8(4);
+
+        const fan = payload.readUint8(1);
+        this.fan = fan === FanModeSetting.Null ? undefined : fan;
+
+        const heat = payload.readUint8(2);
+        this.heatSetpoint = heat === 0 ? undefined : convertByteToTemperature(heat);
+
+        const cool = payload.readUint8(3);
+        this.coolSetpoint = cool === 0 ? undefined : convertByteToTemperature(cool);
+
+        const dehumidifier = payload.readUint8(4);
+        this.dehumidifierSetpoint = dehumidifier === 0 ? undefined : dehumidifier;
 
         const minute = payload.readUint8(5);
         const hour = payload.readUint8(6);
-        const day = payload.readUint8(7);
-        const month = payload.readUint8(8); // 1–12 on wire
-        const year = payload.readUint8(9);
+        const day = payload.readUint8(7);      // day of month 1–31, 0 = Null
+        const month = payload.readUint8(8);    // 1–12 on wire, 0 = Null
+        const year = payload.readUint8(9);     // year − 2000
 
-        // JS Date month is 0-based
-        this.endDate = new Date(year + 2000, Math.max(0, month - 1), day, hour, minute);
+        // Day and month are 1-based on the wire, so either being 0 means the
+        // thermostat sent no end date at all.
+        if (day >= 1 && month >= 1 && month <= 12) {
+            // JS Date month is 0-based
+            this.endDate = new Date(year + 2000, month - 1, day, hour, minute);
+        }
     }
 }
 
@@ -200,9 +239,12 @@ export class HeatBlastRequest extends BasePayloadRequest {
 }
 
 export class HeatBlastResponse extends BasePayloadResponse {
-    heatBlast: boolean;
+    heatBlast: boolean = false;
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Scheduling, FunctionalDomainScheduling.HeatBlast);
+
+        if (!this.hasRequiredLength(1))
+            return;
 
         this.heatBlast = Boolean(payload.readUint8(0));
     }
@@ -229,6 +271,9 @@ export class AwaySettingsResponse extends BasePayloadResponse {
     coolSetpoint: number;
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Scheduling, FunctionalDomainScheduling.AwaySettings);
+
+        if (!this.hasRequiredLength(3))
+            return;
 
         this.fan = payload.readUint8(0);
         // Clamp out-of-range wire indices to the table bounds so the parsed

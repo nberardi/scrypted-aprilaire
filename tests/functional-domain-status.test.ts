@@ -20,6 +20,7 @@ import {
     IAQStatusResponse,
     OfflineResponse,
     ProgressiveRecoveryStatus,
+    SYNC_PAYLOAD_BYTE_COUNT,
     SyncRequest,
     SyncResponse,
     ThermostatError,
@@ -31,6 +32,7 @@ import {
     FunctionalDomain,
     FunctionalDomainStatus,
 } from "../src/AprilaireClient";
+import { ResponseErrorType } from "../src/BasePayloadResponse";
 import {
     COS_SUBSCRIPTION_BYTE_COUNT,
     GuideAttribute,
@@ -140,16 +142,32 @@ describe("Status domainx", () => {
     });
 
     describe(" Sync", () => {
-        it("writes Sync=1 to start full COS dump", () => {
+        // §7.2 declares a 2-byte payload (start flag + reserved). A 1-byte write
+        // is NACKed 0x13 (incorrect write payload size) on firmware that checks,
+        // which would silently disable the entire connect-time COS bootstrap.
+        it("writes a 2-byte payload: start=1 plus reserved", () => {
             const req = new SyncRequest();
             expect(req.domain).toBe(FunctionalDomain.Status);
             expect(req.attribute).toBe(GuideAttribute.Status.Sync);
-            expect(req.toBuffer()).toEqual(Buffer.from([1]));
+            expect(req.toBuffer()).toEqual(Buffer.from([1, 0]));
+            expect(req.toBuffer()).toHaveLength(SYNC_PAYLOAD_BYTE_COUNT);
         });
 
         it("parses Sync complete response/COS", () => {
             const res = new SyncResponse(Buffer.from([1]));
             expect(res.attribute).toBe(GuideAttribute.Status.Sync);
+            expect(res.complete).toBe(true);
+            expect(res.responseError).toBe(ResponseErrorType.NoError);
+        });
+
+        it("reports an incomplete Sync when byte 0 is 0", () => {
+            expect(new SyncResponse(Buffer.from([0])).complete).toBe(false);
+        });
+
+        it("flags an empty Sync payload instead of reporting complete", () => {
+            const res = new SyncResponse(Buffer.alloc(0));
+            expect(res.complete).toBe(false);
+            expect(res.responseError).toBe(ResponseErrorType.NoPayloadReceived);
         });
     });
 

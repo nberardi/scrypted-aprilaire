@@ -61,6 +61,9 @@ export class AprilaireDehumidifier extends AprilaireThermostatBase implements On
     }
 
     processResponse(response: BasePayloadResponse) {
+        if (!this.isUsableResponse(response))
+            return;
+
         let humiditySetting: HumiditySettingStatus = JSON.parse(JSON.stringify(this.humiditySetting));
 
         if (response instanceof ServiceRemindersStatusResponse) {

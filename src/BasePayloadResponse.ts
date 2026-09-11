@@ -1,4 +1,4 @@
-import { FunctionalDomain, FunctionalDomainControl, FunctionalDomainIdentification, FunctionalDomainSensors, FunctionalDomainStatus, FunctionalDomainSetup, FunctionalDomainScheduling, FunctionalDomainAlerts, NAckError } from "./AprilaireClient";
+import { FunctionalDomain, FunctionalDomainAttribute, NAckError } from "./AprilaireClient";
 
 
 export class BasePayloadResponse {
@@ -9,12 +9,36 @@ export class BasePayloadResponse {
     domain: FunctionalDomain;
     attribute: number;
 
-    constructor(payload: Buffer, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainAlerts | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup | number) {
+    constructor(payload: Buffer, domain: FunctionalDomain, attribute: FunctionalDomainAttribute) {
         this.payload = payload;
         this.responseError = ResponseErrorType.NoError;
 
         this.domain = domain;
         this.attribute = attribute;
+    }
+
+    /**
+     * Guard fixed-length parsers against truncated payloads.
+     *
+     * A subclass that reads past the end of its buffer throws `ERR_OUT_OF_RANGE`
+     * from its own constructor, which loses the whole frame and tells callers
+     * nothing. Flagging {@link ResponseErrorType.PayloadMalformed} instead keeps a
+     * usable object: consumers already gate on `responseError`.
+     *
+     * @returns true when the payload is long enough to parse.
+     */
+    protected hasRequiredLength(requiredBytes: number): boolean {
+        if (!this.payload || this.payload.length === 0) {
+            this.responseError = ResponseErrorType.NoPayloadReceived;
+            return false;
+        }
+
+        if (this.payload.length < requiredBytes) {
+            this.responseError = ResponseErrorType.PayloadMalformed;
+            return false;
+        }
+
+        return true;
     }
 }
 
