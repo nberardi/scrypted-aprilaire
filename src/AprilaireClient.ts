@@ -14,9 +14,13 @@ import { BasePayloadResponse, NackResponse } from "./BasePayloadResponse";
 import { AwaySettingsResponse, HeatBlastResponse, ScheduleHoldResponse } from "./FunctionalDomainScheduling";
 import { AlertsStatusResponse, ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
 import { OutboundRequest, OutboundRequestQueue, PermanentNackEvent } from "./OutboundRequestQueue";
+import { ConnectionSupervisor, ConnectionSupervisorOptions } from "./ConnectionSupervisor";
 
 export class AprilaireClient extends EventEmitter {
     private client: AprilaireSocket;
+    private supervisor: ConnectionSupervisor;
+    /** Socket event wiring is installed once; reconnects reuse it. */
+    private listenersWired: boolean = false;
     private ready: boolean = false;
     /** True once a non-empty name was received, both attrs NACK'd, or the grace timer expired. */
     private nameSettled: boolean = false;
@@ -51,35 +55,76 @@ export class AprilaireClient extends EventEmitter {
     mac: string; 
     system: ThermostatAndIAQAvailableResponse;
 
-    constructor(host: string, port: number) {
+    constructor(host: string, port: number, supervisorOptions: ConnectionSupervisorOptions = {}) {
         super();
 
         this.client = new AprilaireSocket(host, port);
+        this.supervisor = new ConnectionSupervisor(
+            {
+                connect: () => this.client.connect(),
+                // Identification/MAC is read-only, cheap, and always supported —
+                // a safe way to prove the link still carries traffic.
+                probe: () => this.client.sendRequest(
+                    Action.ReadRequest,
+                    FunctionalDomain.Identification,
+                    FunctionalDomainIdentification.MacAddress
+                ),
+                drop: (reason) => this.client.dropConnection(reason),
+                log: (message) => console.info(`[${this.client.host}:${this.client.port}] ${message}`),
+            },
+            supervisorOptions
+        );
     }
 
-    read(request: BasePayloadRequest): void {
-        if (!this.client.connected) {
-            console.warn("socket not connected, re-establishing connection");
-            this.connect();
-        }
+    get connected(): boolean {
+        return this.client.connected;
+    }
 
+    /** True once identification completed and `"ready"` has been emitted. */
+    get isReady(): boolean {
+        return this.ready;
+    }
+
+    /**
+     * Queue a read. Requests issued while the link is down are dropped rather
+     * than replayed: the connect-time bootstrap burst and COS re-establish state
+     * on reconnect, so replaying stale reads would only add traffic.
+     */
+    read(request: BasePayloadRequest): void {
+        this.ensureSupervising();
         this.client.readObjectRequest(request);
     }
 
     write(request: BasePayloadRequest) {
-        if (!this.client.connected) {
-            console.warn("socket not connected, re-establishing connection");
-            this.connect();
-        }
-
+        this.ensureSupervising();
         this.client.writeObjectRequest(request);
     }
 
+    /**
+     * Lazily start supervision so a command issued before an explicit connect()
+     * still brings the link up — without tearing down an in-flight attempt.
+     */
+    private ensureSupervising(): void {
+        if (!this.supervisor.isSupervising) {
+            console.warn(`[${this.client.host}:${this.client.port}] command issued before connect; starting supervision`);
+            this.connect();
+        }
+    }
+
     connect() {
+        this.wireSocketListeners();
+        this.supervisor.start();
+    }
+
+    private wireSocketListeners() {
+        if (this.listenersWired)
+            return;
+        this.listenersWired = true;
+
         const self = this;
 
-        this.client.removeAllListeners();
-        this.client.once("connected", () => {
+        this.client.on("connected", () => {
+            self.supervisor.notifyConnected();
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.MacAddress);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.RevisionAndModel);
             // Guide: name is attribute 0x05. Some field firmware also answers 0x04 (legacy).
@@ -95,12 +140,15 @@ export class AprilaireClient extends EventEmitter {
 
             self.emit("connected", self);
         });
-        this.client.once("disconnected", (err?: Error) => {
+        this.client.on("disconnected", (reason?: string) => {
             self.stopDateTimeResync();
             self.clearNameWait();
-            self.emit("disconnected", self, err);
+            self.supervisor.notifyDisconnected(reason);
+            self.emit("disconnected", self, reason);
         });
         this.client.on("response", (response: BasePayloadResponse) => {
+            // Any parsed frame proves the link is alive and answers a pending probe.
+            self.supervisor.notifyActivity();
             this.clientResponse(response);
         });
         this.client.on("nack", (event: PermanentNackEvent) => {
@@ -121,11 +169,10 @@ export class AprilaireClient extends EventEmitter {
             }
             self.emit("nack", event, self);
         });
-
-        this.client.connect();
     }
 
     disconnect() {
+        this.supervisor.stop();
         this.stopDateTimeResync();
         this.clearNameWait();
         this.client.disconnect();
@@ -374,6 +421,37 @@ export enum FunctionalDomainSensors {
     WrittenOutdoorTemperatureValue = 4
 }
 
+export enum FunctionalDomainLockout {
+    LockoutSettings = 1
+}
+
+export enum FunctionalDomainMessaging {
+    PermanentMessages = 1,
+    TemporaryMessage = 2
+}
+
+export enum FunctionalDomainDisplay {
+    LcdBacklightSettings = 1
+}
+
+/**
+ * Any attribute number in any functional domain. The numeric member keeps
+ * domains that only have enums today (Lockout, Messaging, Display) usable by
+ * request/response plumbing without widening every signature again.
+ */
+export type FunctionalDomainAttribute =
+    | FunctionalDomainSetup
+    | FunctionalDomainControl
+    | FunctionalDomainScheduling
+    | FunctionalDomainAlerts
+    | FunctionalDomainSensors
+    | FunctionalDomainLockout
+    | FunctionalDomainStatus
+    | FunctionalDomainIdentification
+    | FunctionalDomainMessaging
+    | FunctionalDomainDisplay
+    | number;
+
 export enum NAckError {
     GenericError = 0x1,
     BufferFullOrDeviceBusy = 0x3,
@@ -393,13 +471,35 @@ export enum NAckError {
     ReadIncorrectPayloadSize = 0x22
 }
 
+/** Largest magnitude the 6 integer bits plus the half-degree bit can represent. */
+export const MAX_ENCODABLE_TEMPERATURE_C = 63.5;
+
 /**
  * Encode Celsius to protocol temperature byte:
  * bit 7 = sign, bit 6 = 0.5 °C, bits 5–0 = integer magnitude. 0 = Null on writes.
+ *
+ * Magnitudes above {@link MAX_ENCODABLE_TEMPERATURE_C} do not fit in bits 5–0 and
+ * would silently wrap into an unrelated temperature (100 °C would encode as the
+ * byte for 36.5 °C). Clamp instead: an out-of-range setpoint is rejected by the
+ * thermostat with NACK 0x10, which is recoverable, whereas a wrapped value is
+ * accepted as a plausible-looking wrong temperature.
  */
 export function convertTemperatureToByte(temperature: number): number {
+    if (!Number.isFinite(temperature)) {
+        console.warn(`temperature ${temperature} is not a finite number; encoding as Null`);
+        return 0;
+    }
+
     const isNegative = temperature < 0;
-    const magnitude = Math.abs(temperature);
+    let magnitude = Math.abs(temperature);
+
+    if (magnitude > MAX_ENCODABLE_TEMPERATURE_C) {
+        console.warn(
+            `temperature ${temperature}C exceeds the encodable range; clamping magnitude to ${MAX_ENCODABLE_TEMPERATURE_C}C`
+        );
+        magnitude = MAX_ENCODABLE_TEMPERATURE_C;
+    }
+
     const isFraction = magnitude % 1 >= 0.5;
 
     return Math.floor(magnitude)
@@ -722,6 +822,13 @@ export interface ReassembledFrame {
     crc: number;
 }
 
+/**
+ * Candidate frames parsed in a single {@link reassembleFrames} pass. Bounded so a
+ * corrupt length field cannot spin the parser, but high enough that a Status/Sync
+ * COS dump (one frame per subscribed attribute) fits in one pass.
+ */
+export const MAX_FRAMES_PER_PASS = 256;
+
 export interface FrameReassemblyResult {
     /** Complete frames with valid CRC only. */
     frames: ReassembledFrame[];
@@ -745,17 +852,20 @@ export interface FrameReassemblyResult {
  * the header, so we prefer dropping one frame over byte-by-byte resync.
  * Bad frames are never returned in `frames`. Callers should log each failure.
  *
- * Safety: if more than 50 complete candidates are processed in one call, stop
- * and leave remaining bytes in `remainder` (defends against pathological input).
+ * Safety: at most {@link MAX_FRAMES_PER_PASS} candidates are processed per call
+ * and remaining bytes stay in `remainder` (defends against pathological input).
+ * A Sync dump can legitimately exceed that in one TCP segment, so callers must
+ * keep re-parsing the remainder while a pass returns a full batch — otherwise
+ * complete frames sit unparsed until the next `data` event.
  */
-export function reassembleFrames(buffer: Buffer): FrameReassemblyResult {
+export function reassembleFrames(buffer: Buffer, maxFrames: number = MAX_FRAMES_PER_PASS): FrameReassemblyResult {
     const frames: ReassembledFrame[] = [];
     let workingData = buffer;
     let crcFailures = 0;
     let count = 0;
 
     while (true) {
-        if (workingData.length === 0 || count > 50)
+        if (workingData.length === 0 || count >= maxFrames)
             break;
 
         // Need at least REV+SEQ+CNT (4 bytes) to read length
@@ -963,19 +1073,31 @@ export class AprilaireResponsePayload {
     }
 }
 
+export enum ConnectionState {
+    Disconnected = 0,
+    Connecting = 1,
+    Connected = 2,
+}
+
+/** TCP keepalive probe interval; surfaces dead peers the OS would otherwise hide. */
+const KEEPALIVE_INITIAL_DELAY_MS = 30_000;
+
 class AprilaireSocket extends EventEmitter {
     host: string;
     port: number;
-    
+
     private client: net.Socket;
-    /** False until the socket's "ready" event; setupSocket() resets it on reconnect. */
-    private _connected: boolean = false;
+    private _state: ConnectionState = ConnectionState.Disconnected;
     /** Sticky TCP receive buffer: retains incomplete frame tails across `data` events. */
     private receiveBuffer: Buffer = Buffer.alloc(0);
     private outboundQueue: OutboundRequestQueue;
 
     get connected() : boolean {
-        return this._connected;
+        return this._state === ConnectionState.Connected;
+    }
+
+    get state(): ConnectionState {
+        return this._state;
     }
 
     constructor(host: string, port: number) {
@@ -992,6 +1114,10 @@ class AprilaireSocket extends EventEmitter {
             },
             undefined,
             {
+                // Never hand a frame to a socket that is still connecting or already
+                // destroyed: the write would be silently buffered and then discarded,
+                // burning a sequence number for a command that never reaches the wire.
+                canSend: () => this.connected && this.client !== undefined,
                 onPermanentNack: (event) => {
                     console.warn(this.format(
                         `permanent NACK status=0x${event.statusCode.toString(16)} (${NAckError[event.statusCode] ?? "Unknown"}) sequence=${event.sequence} attempts=${event.attempts}`
@@ -1009,104 +1135,172 @@ class AprilaireSocket extends EventEmitter {
     private setupSocket() {
         const self = this;
 
-        if (this.client)
-            this.disconnect();
+        // Replace any previous socket without announcing a disconnect: the caller
+        // is starting a new attempt, not losing an established link.
+        this.teardown(false, "replacing socket");
 
-        this._connected = false;
-        this.receiveBuffer = Buffer.alloc(0);
-        this.client = new net.Socket();
-        this.outboundQueue.reset();
+        const socket = new net.Socket();
+        this.client = socket;
 
-        this.client.on("close", (hadError: boolean) => {
+        socket.on("close", (hadError: boolean) => {
             console.debug(self.format(`close`), hadError);
-
-            self._connected = false;
-            self.receiveBuffer = Buffer.alloc(0);
-            self.outboundQueue.reset();
-            self.emit('disconnected');
+            // Ignore close from a socket we already replaced.
+            if (self.client !== socket)
+                return;
+            self.teardown(true, hadError ? "socket closed after error" : "socket closed");
         });
 
-        this.client.on("data", (data: Buffer) => {
+        socket.on("data", (data: Buffer) => {
+            if (self.client !== socket)
+                return;
+
             try {
                 console.group(self.format(`received data, data=${data.toString("base64")}`));
-                // Append to sticky buffer, extract complete frames, keep remainder.
+                // Append to sticky buffer, then extract every complete frame.
                 self.receiveBuffer = Buffer.concat([self.receiveBuffer, data]);
-                const { frames, remainder, crcFailures } = reassembleFrames(self.receiveBuffer);
-                self.receiveBuffer = remainder;
-
-                if (crcFailures > 0) {
-                    console.error(self.format(
-                        `CRC failure: dropped ${crcFailures} frame(s); continuing with remainder length=${remainder.length}`
-                    ));
-                }
-
-                for (const frame of frames) {
-                    try {
-                        if (frame.action === Action.NAck) {
-                            console.debug(self.format(
-                                `received NACK, sequence=${frame.sequence}, status=0x${frame.attribute.toString(16)}`
-                            ));
-                        } else {
-                            console.debug(self.format(
-                                `received data part, sequence=${frame.sequence}, action=${Action[frame.action]}, functional_domain=${FunctionalDomain[frame.domain]}, attribute=${frame.attribute}`
-                            ));
-                        }
-
-                        const element = new AprilaireResponsePayload(
-                            self.host,
-                            self.port,
-                            frame.revision,
-                            frame.sequence,
-                            frame.length,
-                            frame.action,
-                            frame.domain,
-                            frame.attribute,
-                            frame.payload,
-                            frame.crc
-                        );
-                        const payload = element.toObject();
-
-                        if (payload instanceof NackResponse) {
-                            const seq = payload.sequence ?? element.sequence;
-                            self.outboundQueue.handleNack(payload.statusCode, seq);
-                        }
-
-                        if (payload)
-                            self.emit('response', payload);
-                    }
-                    catch (err) {
-                        console.error(err.message);
-                    }
-                }
+                self.drainReceiveBuffer();
             } finally {
                 console.groupEnd();
             }
         });
 
-        this.client.on("ready", () => { 
+        socket.on("ready", () => {
             console.debug(self.format(`ready`));
+            if (self.client !== socket)
+                return;
 
-            self._connected = true;
+            self._state = ConnectionState.Connected;
+            // Detect peers that vanish without a FIN (power loss, NAT eviction).
+            socket.setKeepAlive(true, KEEPALIVE_INITIAL_DELAY_MS);
+            socket.setNoDelay(true);
             self.emit('connected');
+            // Anything queued while connecting can go out now.
+            self.outboundQueue.flush();
         });
 
-        this.client.on("connect", () => { console.debug(self.format(`connect`)); });
-        this.client.on("drain", () => { console.debug(self.format(`drain`)); });
-        this.client.on("end", () => { console.debug(self.format(`end`)); });
-        this.client.on("error", (err: Error) => { console.debug(self.format(`error: ${err}`)); });
-        this.client.on("timeout", () => { console.debug(self.format(`timeout`)); });
+        socket.on("connect", () => { console.debug(self.format(`connect`)); });
+        socket.on("drain", () => { console.debug(self.format(`drain`)); });
+        socket.on("end", () => { console.debug(self.format(`end`)); });
+        socket.on("error", (err: Error) => { console.debug(self.format(`error: ${err}`)); });
+        socket.on("timeout", () => { console.debug(self.format(`timeout`)); });
+    }
+
+    /**
+     * Parse every complete frame currently buffered.
+     *
+     * A single pass is bounded by {@link MAX_FRAMES_PER_PASS}, so keep going while
+     * a pass fills its batch; a Sync dump can put more frames in one segment than
+     * the cap allows and the surplus must not wait for the next `data` event.
+     */
+    private drainReceiveBuffer() {
+        const self = this;
+
+        while (true) {
+            const { frames, remainder, crcFailures } = reassembleFrames(self.receiveBuffer);
+            self.receiveBuffer = remainder;
+
+            if (crcFailures > 0) {
+                console.error(self.format(
+                    `CRC failure: dropped ${crcFailures} frame(s); continuing with remainder length=${remainder.length}`
+                ));
+            }
+
+            for (const frame of frames) {
+                try {
+                    if (frame.action === Action.NAck) {
+                        console.debug(self.format(
+                            `received NACK, sequence=${frame.sequence}, status=0x${frame.attribute.toString(16)}`
+                        ));
+                    } else {
+                        console.debug(self.format(
+                            `received data part, sequence=${frame.sequence}, action=${Action[frame.action]}, functional_domain=${FunctionalDomain[frame.domain]}, attribute=${frame.attribute}`
+                        ));
+                    }
+
+                    const element = new AprilaireResponsePayload(
+                        self.host,
+                        self.port,
+                        frame.revision,
+                        frame.sequence,
+                        frame.length,
+                        frame.action,
+                        frame.domain,
+                        frame.attribute,
+                        frame.payload,
+                        frame.crc
+                    );
+                    const payload = element.toObject();
+
+                    if (payload instanceof NackResponse) {
+                        const seq = payload.sequence ?? element.sequence;
+                        self.outboundQueue.handleNack(payload.statusCode, seq);
+                    }
+
+                    if (payload)
+                        self.emit('response', payload);
+                }
+                catch (err) {
+                    console.error(self.format(`failed to handle frame: ${err instanceof Error ? err.message : err}`));
+                }
+            }
+
+            if (frames.length < MAX_FRAMES_PER_PASS)
+                return;
+        }
     }
 
     connect() {
+        // Re-entrant connects used to destroy an in-flight socket and start over,
+        // so two commands issued while down could thrash indefinitely.
+        if (this._state !== ConnectionState.Disconnected) {
+            console.debug(this.format(`connect ignored, state=${ConnectionState[this._state]}`));
+            return;
+        }
+
         this.setupSocket();
+        this._state = ConnectionState.Connecting;
         this.client.connect({ port: this.port, host: this.host });
     }
 
+    /** Intentional shutdown: no disconnect is announced to reconnect supervision. */
     disconnect() {
+        this.teardown(false, "closed by host");
+    }
+
+    /** Force the link down so supervision treats it as a failure and reconnects. */
+    dropConnection(reason: string) {
+        if (this._state === ConnectionState.Disconnected) {
+            // Nothing to destroy, but the caller is still waiting on a retry.
+            this.emit('disconnected', reason);
+            return;
+        }
+        console.warn(this.format(`dropping connection: ${reason}`));
+        this.teardown(true, reason);
+    }
+
+    /**
+     * Release the current socket and reset per-connection state.
+     *
+     * Listeners are removed before destroy so the replaced socket cannot emit a
+     * late `close` that would be mistaken for losing the new connection. Pending
+     * commands are dropped rather than replayed — stale writes must not be
+     * applied minutes later against changed thermostat state.
+     */
+    private teardown(announce: boolean, reason: string) {
+        const socket = this.client;
+
+        this.client = undefined;
+        this._state = ConnectionState.Disconnected;
         this.receiveBuffer = Buffer.alloc(0);
         this.outboundQueue.reset();
-        this.client.destroy();
-        this.client = undefined;
+
+        if (socket) {
+            socket.removeAllListeners();
+            socket.destroy();
+        }
+
+        if (announce)
+            this.emit('disconnected', reason);
     }
 
     readObjectRequest(request: BasePayloadRequest) { 
@@ -1118,11 +1312,11 @@ class AprilaireSocket extends EventEmitter {
         this.sendCommand(Action.Write, request.domain, request.attribute, buffer);
     }
 
-    sendRequest(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup) {
+    sendRequest(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainAttribute) {
         this.sendCommand(action, domain, attribute);
     }
 
-    private sendCommand(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainControl | FunctionalDomainIdentification | FunctionalDomainScheduling | FunctionalDomainSensors | FunctionalDomainStatus | FunctionalDomainSetup, data: Buffer = Buffer.alloc(0)) {
+    private sendCommand(action: Action, domain: FunctionalDomain, attribute: FunctionalDomainAttribute, data: Buffer = Buffer.alloc(0)) {
         const request: OutboundRequest = { action, domain, attribute, data };
         console.debug(this.format(
             `queuing data, action=${Action[action]}, functional_domain=${FunctionalDomain[domain]}, attribute=${attribute}, pending=${this.outboundQueue.pendingCount}`

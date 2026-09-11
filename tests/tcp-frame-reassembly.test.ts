@@ -11,12 +11,14 @@ import {
     FunctionalDomainControl,
     FunctionalDomainIdentification,
     FunctionalDomainSensors,
+    MAX_FRAMES_PER_PASS,
     NAckError,
     generateCrc,
     reassembleFrames,
     type ReassembledFrame,
 } from "../src/AprilaireClient";
 import { convertTemperatureToByte } from "../src/AprilaireClient";
+import { COS_SUBSCRIPTION_BYTE_COUNT } from "../src/FunctionalDomainStatus";
 
 /**
  * Build a wire-valid Aprilaire frame with production CRC.
@@ -429,6 +431,51 @@ describe("TCP frame reassembly (issue #17)", () => {
             expect(session.frames).toHaveLength(1);
             expect(session.frames[0].sequence).toBe(11);
             expect(session.remainder.equals(partial)).toBe(true);
+        });
+    });
+
+    describe("per-pass frame cap", () => {
+        /**
+         * A Sync dump emits one COS frame per subscribed attribute and they can
+         * land in a single TCP segment, so the cap must not silently strand
+         * complete frames. The cap bounds one pass; the caller re-parses the
+         * remainder while a pass comes back full.
+         */
+        it("is large enough for a full COS subscription dump in one pass", () => {
+            expect(MAX_FRAMES_PER_PASS).toBeGreaterThan(COS_SUBSCRIPTION_BYTE_COUNT);
+        });
+
+        it("stops at the cap and leaves the rest as remainder", () => {
+            const chunk = Buffer.concat(new Array(5).fill(macFrame));
+            const result = reassembleFrames(chunk, 3);
+
+            expect(result.frames).toHaveLength(3);
+            expect(result.remainder.length).toBe(macFrame.length * 2);
+        });
+
+        it("parses every frame when the caller drains a capped remainder", () => {
+            const total = 7;
+            const cap = 3;
+            let buffer = Buffer.concat(new Array(total).fill(macFrame));
+            const frames: ReassembledFrame[] = [];
+
+            // Production drain loop: keep going while a pass returns a full batch.
+            while (true) {
+                const pass = reassembleFrames(buffer, cap);
+                frames.push(...pass.frames);
+                buffer = pass.remainder;
+                if (pass.frames.length < cap)
+                    break;
+            }
+
+            expect(frames).toHaveLength(total);
+            expect(buffer.length).toBe(0);
+        });
+
+        it("returns the cap exactly when the batch is full, so callers know to re-drain", () => {
+            const chunk = Buffer.concat(new Array(4).fill(macFrame));
+            expect(reassembleFrames(chunk, 4).frames).toHaveLength(4);
+            expect(reassembleFrames(chunk, 4).remainder.length).toBe(0);
         });
     });
 });

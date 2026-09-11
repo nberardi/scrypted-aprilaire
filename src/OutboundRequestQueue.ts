@@ -1,12 +1,14 @@
 /**
  * Outbound request queue with NACK-driven retry (Guide §H.5).
  *
- * - Tracks each outbound write/read with an HA sequence number (0–126)
+ * - Tracks each outbound write/read with an HA sequence number (0–127)
  * - On retryable NACK (0x01 Generic, 0x03 Busy, 0x09 Timeout): re-sends the
  *   same frame with the same sequence up to 2 additional times after a delay
  * - On non-retryable NACK or exhausted attempts: clears the transaction and
  *   notifies the caller
  * - Sequence advances only when starting a new command, never on retry
+ * - Holds commands while the transport reports it cannot send, so frames are
+ *   never handed to a socket that is still connecting or already destroyed
  */
 
 import { NackResponse } from "./BasePayloadResponse";
@@ -16,6 +18,9 @@ export const NACK_RETRY_MAX_ATTEMPTS = 3;
 
 /** Default delay between retry attempts (Guide: 0.5–1s) */
 export const NACK_RETRY_DELAY_MS = 500;
+
+/** Home-automation sequence numbers occupy 0–127; the thermostat uses 128–255. */
+export const HOST_SEQUENCE_COUNT = 128;
 
 export interface OutboundRequest {
     action: number;
@@ -48,6 +53,12 @@ export interface OutboundRequestQueueOptions {
     maxAttempts?: number;
     retryDelayMs?: number;
     onPermanentNack?: (event: PermanentNackEvent) => void;
+    /**
+     * Transport readiness gate. While this returns false, commands accumulate in
+     * `pending` instead of being framed and written. Call {@link OutboundRequestQueue.flush}
+     * once the transport becomes writable.
+     */
+    canSend?: () => boolean;
 }
 
 /**
@@ -71,6 +82,7 @@ export class OutboundRequestQueue {
     private readonly maxAttempts: number;
     private readonly retryDelayMs: number;
     private readonly onPermanentNack?: (event: PermanentNackEvent) => void;
+    private readonly canSend: () => boolean;
     /** How long to keep a frame for possible NACK after its last send. */
     private readonly idleTtlMs: number;
 
@@ -83,11 +95,12 @@ export class OutboundRequestQueue {
         this.maxAttempts = options.maxAttempts ?? NACK_RETRY_MAX_ATTEMPTS;
         this.retryDelayMs = options.retryDelayMs ?? NACK_RETRY_DELAY_MS;
         this.onPermanentNack = options.onPermanentNack;
+        this.canSend = options.canSend ?? (() => true);
         // Cover full retry budget plus a small grace window for late NACKs.
         this.idleTtlMs = this.maxAttempts * this.retryDelayMs + 2000;
     }
 
-    /** Next sequence that will be assigned to a new command (0–126). */
+    /** Next sequence that will be assigned to a new command (0–127). */
     get nextSequence(): number {
         return this.sequence;
     }
@@ -111,12 +124,20 @@ export class OutboundRequestQueue {
     }
 
     /**
-     * Enqueue an outbound request. Sent immediately unless a retry is pending,
-     * in which case it waits until retries finish (or permanently fail).
+     * Enqueue an outbound request. Sent immediately unless a retry is pending or
+     * the transport is not writable, in which case it waits.
      * @returns sequence number assigned when the request is first sent, or -1 if still queued
      */
     enqueue(request: OutboundRequest): number {
         this.pending.push(request);
+        return this.drain();
+    }
+
+    /**
+     * Send anything held back by the transport gate. Called when the socket
+     * becomes writable.
+     */
+    flush(): number {
         return this.drain();
     }
 
@@ -176,12 +197,13 @@ export class OutboundRequestQueue {
     }
 
     /**
-     * Drain pending commands while not blocked by a scheduled retry.
+     * Drain pending commands while not blocked by a scheduled retry and the
+     * transport reports it can accept frames.
      * @returns sequence of the last command started this call, or -1
      */
     private drain(): number {
         let lastSeq = -1;
-        while (this.pending.length > 0 && this.retryPending === 0) {
+        while (this.pending.length > 0 && this.retryPending === 0 && this.canSend()) {
             const request = this.pending.shift()!;
             lastSeq = this.sendNew(request);
         }
@@ -191,7 +213,7 @@ export class OutboundRequestQueue {
     private sendNew(request: OutboundRequest): number {
         const seq = this.sequence;
         // Advance only for a new command — retries reuse the stored sequence/frame.
-        this.sequence = (this.sequence + 1) % 127;
+        this.sequence = (this.sequence + 1) % HOST_SEQUENCE_COUNT;
 
         const frame = this.buildFrame(seq, request);
         const entry: InFlightRequest = {
