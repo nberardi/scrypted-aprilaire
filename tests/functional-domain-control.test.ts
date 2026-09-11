@@ -3,6 +3,9 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+    AirCleaningEvent,
+    AirCleaningMode,
+    AirCleaningSettingsRequest,
     AirCleaningSettingsResponse,
     DEHUMIDIFICATION_SETPOINT_FALLBACK,
     DEHUMIDIFICATION_SETPOINT_MAX,
@@ -10,6 +13,9 @@ import {
     DehumidificationSetpointRequest,
     DehumidificationSetpointResponse,
     FanModeSetting,
+    FreshAirEvent,
+    FreshAirMode,
+    FreshAirSettingsRequest,
     FreshAirSettingsResponse,
     HUMIDIFICATION_AUTO_SETPOINT_MAX,
     HUMIDIFICATION_AUTO_SETPOINT_MIN,
@@ -19,6 +25,8 @@ import {
     HumidificationSetpointRequest,
     HumidificationSetpointResponse,
     HumidificationState,
+    IncrementDirection,
+    IncrementSetpointRequest,
     ThermostatAndIAQAvailableResponse,
     ThermostatCapabilities,
     ThermostatMode,
@@ -426,6 +434,39 @@ describe("Control domainx", () => {
                     }
                 }
             });
+        });
+    });
+
+    describe(" Increment Setpoint (§2.2 write-only)", () => {
+        it("serializes 4 bytes: heat/cool/hum/dehum 0=dec 1=inc 2=null", () => {
+            const req = new IncrementSetpointRequest();
+            req.heat = IncrementDirection.Increment;
+            req.cool = IncrementDirection.Null;
+            req.humidifier = IncrementDirection.Decrement;
+            req.dehumidifier = IncrementDirection.Null;
+            const buf = req.toBuffer();
+            expect(req.domain).toBe(GuideDomain.Control);
+            expect(req.attribute).toBe(GuideAttribute.Control.IncrementSetpoint);
+            expect(buf).toEqual(Buffer.from([1, 2, 0, 2]));
+            expect(req.toReadBuffer().length).toBe(0);
+        });
+    });
+
+    describe(" Fresh Air / Air Cleaning writes (§2.5–2.6)", () => {
+        it("writes persistent mode + event for fresh air", () => {
+            const req = new FreshAirSettingsRequest();
+            req.mode = FreshAirMode.Auto;
+            req.event = FreshAirEvent.ThreeHourEvent;
+            expect(req.attribute).toBe(GuideAttribute.Control.FreshAirSetting);
+            expect(req.toBuffer()).toEqual(Buffer.from([1, 2]));
+        });
+
+        it("writes air cleaning mode + event", () => {
+            const req = new AirCleaningSettingsRequest();
+            req.mode = AirCleaningMode.ConstantClean;
+            req.event = AirCleaningEvent.TwentyFourHourEvent;
+            expect(req.attribute).toBe(GuideAttribute.Control.AirCleaningSetting);
+            expect(req.toBuffer()).toEqual(Buffer.from([1, 4]));
         });
     });
 });

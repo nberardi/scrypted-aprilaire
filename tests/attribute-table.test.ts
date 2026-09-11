@@ -10,6 +10,9 @@ import {
     FunctionalDomainAlerts,
     FunctionalDomainControl,
     FunctionalDomainIdentification,
+    FunctionalDomainLockout,
+    FunctionalDomainMessaging,
+    FunctionalDomainDisplay,
     FunctionalDomainScheduling,
     FunctionalDomainSensors,
     FunctionalDomainSetup,
@@ -179,6 +182,21 @@ describe("protocolattribute / domain / action tables", () => {
                 GuideAttribute.Identification.ThermostatName
             );
             expect(FunctionalDomainIdentification.ThermostatName).toBe(0x05);
+        });
+    });
+
+    describe("Lockout / Messaging / Display attributes", () => {
+        it("matches wiki attribute numbers for stub domains", () => {
+            expect(FunctionalDomainLockout.LockoutSettings).toBe(GuideAttribute.Lockout.LockoutSettings);
+            expect(FunctionalDomainMessaging.PermanentMessages).toBe(
+                GuideAttribute.Messaging.PermanentMessages
+            );
+            expect(FunctionalDomainMessaging.TemporaryMessage).toBe(
+                GuideAttribute.Messaging.TemporaryMessage
+            );
+            expect(FunctionalDomainDisplay.LcdBacklightSettings).toBe(
+                GuideAttribute.Display.LcdBacklightSettings
+            );
         });
     });
 

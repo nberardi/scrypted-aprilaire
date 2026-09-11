@@ -26,6 +26,7 @@ npm run test:watch
 | `tcp-frame-reassembly.test.ts` | Stream framing, partial/batched frames, per-pass cap |
 | `nack-retry-queue.test.ts` | Sequence allocation, NACK retry policy, transport gating |
 | `connection-supervisor.test.ts` | Reconnect backoff, connect timeout, liveness probe |
+| `protocol-coverage.test.ts` | Wiki codec coverage + product-surface gaps |
 
 ## Interpreting failures
 

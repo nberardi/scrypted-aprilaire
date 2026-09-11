@@ -1,5 +1,6 @@
 import { FunctionalDomain, FunctionalDomainIdentification } from "./AprilaireClient";
-import { BasePayloadResponse } from "./BasePayloadResponse";
+import { BasePayloadRequest } from "./BasePayloadRequest";
+import { BasePayloadResponse, readPayloadU8 } from "./BasePayloadResponse";
 
 /*
 *
@@ -31,6 +32,36 @@ export class ThermostatNameResponse extends BasePayloadResponse {
     }
 }
 
+/** Postal field: 7 chars + NUL. Name field: 15 chars + NUL. */
+export const THERMOSTAT_NAME_POSTAL_WIDTH = 7;
+export const THERMOSTAT_NAME_WIDTH = 15;
+
+function encodeFixedAsciiField(text: string, width: number): Buffer {
+    const field = Buffer.alloc(width + 1); // width chars + terminating NUL
+    Buffer.from(text ?? "", "ascii").copy(field, 0, 0, width);
+    return field;
+}
+
+/**
+ * Write Identification / Thermostat Name (§8.5) — 24 data bytes.
+ * Attribute is 0x05. Guide marks this as 8840-class only.
+ */
+export class ThermostatNameRequest extends BasePayloadRequest {
+    postalCode: string = "";
+    name: string = "";
+
+    constructor() {
+        super(FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
+    }
+
+    toBuffer(): Buffer {
+        return Buffer.concat([
+            encodeFixedAsciiField(this.postalCode, THERMOSTAT_NAME_POSTAL_WIDTH),
+            encodeFixedAsciiField(this.name, THERMOSTAT_NAME_WIDTH),
+        ]);
+    }
+}
+
 /** ASCII identification strings are fixed-width and NUL-padded on the wire. */
 export function sanitizeIdentificationText(bytes: Buffer | string): string {
     const raw = typeof bytes === "string" ? bytes : bytes.toString("ascii");
@@ -45,11 +76,11 @@ export class MacAddressResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Identification, FunctionalDomainIdentification.MacAddress);
 
-        const macAddressBytes = payload.subarray(0, 6);
+        const macAddressBytes = payload.subarray(0, Math.min(6, payload.length));
         this.macAddress = macAddressBytes.toString("hex");
 
-        this.forceConnection = payload.readUint8(6);
-        this.setting = payload.readUint8(7);
+        this.forceConnection = readPayloadU8(payload, 6);
+        this.setting = readPayloadU8(payload, 7);
     }
 }
 
@@ -75,13 +106,13 @@ export class RevisionAndModelResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Identification, FunctionalDomainIdentification.RevisionAndModel);
 
-        this.hardware = String.fromCharCode(payload.readUint8(0));
-        this.firmwareMajor = payload.readUint8(1);
-        this.firmwareMinor = payload.readUint8(2);
-        this.protocolMajor = payload.readUint8(3);
-        this.model = this.convertByteToModel(payload.readUint8(4));
-        this.gainspanFirmwareMajor = payload.readUint8(5);
-        this.gainspanFirmwareMinor = payload.readUint8(6);
+        this.hardware = String.fromCharCode(readPayloadU8(payload, 0));
+        this.firmwareMajor = readPayloadU8(payload, 1);
+        this.firmwareMinor = readPayloadU8(payload, 2);
+        this.protocolMajor = readPayloadU8(payload, 3);
+        this.model = this.convertByteToModel(readPayloadU8(payload, 4));
+        this.gainspanFirmwareMajor = readPayloadU8(payload, 5);
+        this.gainspanFirmwareMinor = readPayloadU8(payload, 6);
     }
 
     convertByteToModel(byte: number): string {
@@ -96,6 +127,7 @@ export class RevisionAndModelResponse extends BasePayloadResponse {
             case 7: return "8840";
             case 14: return "8840M";
             case 28: return "6003";
+            default: return `Unknown (${byte})`;
         }
     }
 }

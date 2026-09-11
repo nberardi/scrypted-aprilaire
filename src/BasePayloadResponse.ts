@@ -1,6 +1,23 @@
 import { FunctionalDomain, FunctionalDomainAttribute, NAckError } from "./AprilaireClient";
 
 
+/**
+ * Read one payload byte, or `fallback` when the buffer is missing/short.
+ * Thermostat frames vary by model; short COS/read bodies must not throw.
+ *
+ * Use this only where the record is genuinely variable-length by model
+ * (Installer Settings is 44–56 bytes), so a missing trailing byte is expected
+ * rather than a fault. For fixed-length records a short payload means the data
+ * is untrustworthy, so guard with {@link BasePayloadResponse.hasRequiredLength}
+ * and let the device layer discard the response instead of absorbing defaults
+ * it cannot tell apart from real readings.
+ */
+export function readPayloadU8(payload: Buffer | undefined, offset: number, fallback: number = 0): number {
+    if (!payload || offset < 0 || offset >= payload.length)
+        return fallback;
+    return payload.readUint8(offset);
+}
+
 export class BasePayloadResponse {
     timestamp = Date.now();
 

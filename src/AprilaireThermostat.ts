@@ -3,9 +3,12 @@ import { AprilaireClient } from './AprilaireClient';
 import { AprilaireSystemType, AprilaireThermostatBase } from './AprilaireThermostatBase';
 import { DehumidificationSetpointResponse, FanModeSetting, HumidificationSetpointResponse, HumidificationState, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode, enforceDeadband, DeadbandPreserve } from './FunctionalDomainControl';
 import {
+    ControlSetup,
     DEFAULT_DEADBAND_C,
     deadbandIndexToCelsius,
     filterHoldChoicesForInstaller,
+    isCoolSetpointWritable,
+    isHeatSetpointWritable,
     ScaleRequest,
     ScaleResponse,
     shouldShowHeatBlastSetting,
@@ -301,6 +304,7 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         // In Auto, dual heat+cool writes that violate deadband NACK or surprise-adjust
         // on the thermostat (§J.6 / §2.1). Pre-enforce so the wire values stay valid.
         this.applyDeadbandToRequest(request, settings.mode);
+        this.applyControlSetupToRequest(request);
 
         // Reflect any deadband adjustment back into Scrypted state.
         if (request.heatSetpoint && request.coolSetpoint) {
@@ -387,6 +391,23 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         }
         request.heatSetpoint = result.heatSetpoint;
         request.coolSetpoint = result.coolSetpoint;
+    }
+
+    /**
+     * Control §2.1: Heat Only / Cool Only installations NACK the unused setpoint.
+     * Null (0) that field so the write is accepted.
+     */
+    private applyControlSetupToRequest(request: ThermostatSetpointAndModeSettingsRequest): void {
+        const setup = this._installerSettings?.controlSetup;
+        if (!isHeatSetpointWritable(setup)) {
+            request.heatSetpoint = 0;
+        }
+        if (!isCoolSetpointWritable(setup)) {
+            request.coolSetpoint = 0;
+        }
+        if (setup === ControlSetup.HeatOnly || setup === ControlSetup.CoolOnly) {
+            this.console.info(`control setup=${ControlSetup[setup]}: omitted unused setpoint on write`);
+        }
     }
 
     /** Best-effort current heat/cool from temperatureSetting (protocol °C). */
@@ -508,6 +529,7 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
             this.temperatureUnit = response.scale === TemperatureScale.F ? TemperatureUnit.F : TemperatureUnit.C;
             this.console.info(
                 `installer settings: scale=${response.scale}, deadband=${response.deadband} (${this._deadbandC}C), ` +
+                `controlSetup=${response.controlSetup}, equipment=${response.equipmentType}, ` +
                 `away=${response.awayEnabled}, heatBlast=${response.heatBlastEnabled}, outdoor=${response.outdoorSensor}, ` +
                 `hvacReminder=${response.hvacServiceReminderMonths}`
             );

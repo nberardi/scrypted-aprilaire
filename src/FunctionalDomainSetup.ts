@@ -1,5 +1,5 @@
 import { FunctionalDomain, FunctionalDomainSetup } from "./AprilaireClient";
-import { BasePayloadResponse } from "./BasePayloadResponse";
+import { BasePayloadResponse, readPayloadU8 } from "./BasePayloadResponse";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 
 /*
@@ -162,13 +162,21 @@ export class ThermostatInstallerSettingsRequest extends BasePayloadRequest {
  *
  * | Offset | Field                         | Values / notes |
  * |--------|-------------------------------|----------------|
+ * | 0      | connectedTo (#0)              | 0=Cloud, 1=Automation |
+ * | 1      | equipmentType (#1)            | 0=Heat/Cool, 1=Heat Pump |
  * | 2      | scale (#2)                    | 0=F, 1=C (existing) |
+ * | 3      | reversingValve (#3)           | 0=O/B cool, 1=O/B heat |
+ * | 4      | controlSetup (#4)             | 0=Heat+Cool, 1=Heat Only, 2=Cool Only |
+ * | 5      | cooling/compressor stages (#5)| 0=One … 2=Three |
+ * | 6      | heating/aux stages (#6)       | 0=One … 2=Three |
+ * | 7      | fan heating / aux type (#7)   | 0=Gas/Oil, 1=Electric |
  * | 12     | autoChangeover (#12)          | 0=Disabled, 1=Enabled |
  * | 13     | deadband (#13)                | 0–7 → 2F/1C … 9F/4.5C; ignore if auto off |
  * | 15     | outdoorSensor (#15)           | 0=NotInstalled, 1=Installed, 2=Automation (existing) |
  * | 26     | awayEnabled (#26)             | 0=Disabled, 1=Enabled (pyaprilaire AWAY_AVAILABLE) |
  * | 27     | heatBlastEnabled (#27)        | 0=Disabled, 1=Enabled |
  * | 28     | heatBlastOffset (#28)         | 0=3F/1.5C, 1=4F/2C, 2=5F/2.5C |
+ * | 33     | programFormat (#41)           | 0=7-day, 1=Non-programmable |
  * | 34     | hvacServiceReminderMonths (#43) | 0=Null, 1–12=months, 13=Off |
  * | 41     | airFilterServiceReminderMonths (#54, 8476) | 1–12=months, 13=Off |
  * | 42     | waterPanelServiceReminderMonths (#55, 8476) | 1–12=months, 13=Off |
@@ -177,8 +185,25 @@ export class ThermostatInstallerSettingsRequest extends BasePayloadRequest {
  * safe defaults (disabled / 0). Do not invent offsets not listed above.
  */
 export class ThermostatInstallerSettingsResponse extends BasePayloadResponse {
+    /** Byte 0 — Connected To (#0). */
+    connectedTo: ConnectedTo;
+    /** Byte 1 — Equipment Type (#1). */
+    equipmentType: EquipmentType;
     /** Byte 2 — Temperature Scale (#2). */
     scale: TemperatureScale;
+    /** Byte 3 — Reversing Valve (#3); ignore when equipment is Heat/Cool. */
+    reversingValve: ReversingValve;
+    /**
+     * Byte 4 — Control Setup (#4). Heat Only / Cool Only installations NACK
+     * writes to the unused setpoint (Control §2.1).
+     */
+    controlSetup: ControlSetup;
+    /** Byte 5 — Cooling stages (heat/cool) or compressor stages (heat pump). */
+    coolingOrCompressorStages: number;
+    /** Byte 6 — Heating stages (heat/cool) or aux heat stages (heat pump). */
+    heatingOrAuxStages: number;
+    /** Byte 7 — Fan control in heating (gas/oil vs electric) / aux equipment type. */
+    fanControlHeating: FanControlHeating;
     /** Byte 12 — Auto Changeover (#12); deadband only applies when enabled. */
     autoChangeoverEnabled: boolean;
     /**
@@ -195,6 +220,8 @@ export class ThermostatInstallerSettingsResponse extends BasePayloadResponse {
     heatBlastEnabled: boolean;
     /** Byte 28 — Heat Blast Offset (#28) raw enum. */
     heatBlastOffset: number;
+    /** Byte 33 — Program Format (#41). */
+    programFormat: ProgramFormat;
     /**
      * Byte 34 — HVAC Service Reminder (#43) months:
      * 0=Null, 1–12=interval months, 13=Off.
@@ -214,16 +241,24 @@ export class ThermostatInstallerSettingsResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Setup, FunctionalDomainSetup.ThermostatInstallSettings);
 
-        this.scale = readU8(payload, 2, TemperatureScale.F);
-        this.autoChangeoverEnabled = readU8(payload, 12, 0) === 1;
-        this.deadband = readU8(payload, 13, 0);
-        this.outdoorSensor = readU8(payload, 15, OutdoorSensorStatus.NotInstalled);
-        this.awayEnabled = readU8(payload, 26, 0) === 1;
-        this.heatBlastEnabled = readU8(payload, 27, 0) === 1;
-        this.heatBlastOffset = readU8(payload, 28, 0);
-        this.hvacServiceReminderMonths = readU8(payload, 34, 0);
-        this.airFilterServiceReminderMonths = readU8(payload, 41, 0);
-        this.waterPanelServiceReminderMonths = readU8(payload, 42, 0);
+        this.connectedTo = readPayloadU8(payload, 0, ConnectedTo.AutomationSystem);
+        this.equipmentType = readPayloadU8(payload, 1, EquipmentType.HeatCool);
+        this.scale = readPayloadU8(payload, 2, TemperatureScale.F);
+        this.reversingValve = readPayloadU8(payload, 3, ReversingValve.EnergizedInCooling);
+        this.controlSetup = readPayloadU8(payload, 4, ControlSetup.HeatAndCool);
+        this.coolingOrCompressorStages = readPayloadU8(payload, 5, 0);
+        this.heatingOrAuxStages = readPayloadU8(payload, 6, 0);
+        this.fanControlHeating = readPayloadU8(payload, 7, FanControlHeating.GasOil);
+        this.autoChangeoverEnabled = readPayloadU8(payload, 12, 0) === 1;
+        this.deadband = readPayloadU8(payload, 13, 0);
+        this.outdoorSensor = readPayloadU8(payload, 15, OutdoorSensorStatus.NotInstalled);
+        this.awayEnabled = readPayloadU8(payload, 26, 0) === 1;
+        this.heatBlastEnabled = readPayloadU8(payload, 27, 0) === 1;
+        this.heatBlastOffset = readPayloadU8(payload, 28, 0);
+        this.programFormat = readPayloadU8(payload, 33, ProgramFormat.SevenDay);
+        this.hvacServiceReminderMonths = readPayloadU8(payload, 34, 0);
+        this.airFilterServiceReminderMonths = readPayloadU8(payload, 41, 0);
+        this.waterPanelServiceReminderMonths = readPayloadU8(payload, 42, 0);
     }
 
     /** True when HVAC service reminder is installer-enabled (1–12 months). */
@@ -248,16 +283,16 @@ export class ThermostatInstallerSettingsResponse extends BasePayloadResponse {
     get deadbandCelsius(): number {
         return deadbandToCelsius(this.deadband);
     }
-}
 
-/**
- * Read a payload byte or `fallback` when the buffer is shorter than needed.
- * Installer packets vary slightly by model; short payloads must not throw.
- */
-function readU8(payload: Buffer, offset: number, fallback: number): number {
-    if (offset < 0 || offset >= payload.length)
-        return fallback;
-    return payload.readUint8(offset);
+    /** False on Cool Only installations — unused heat setpoint writes NACK. */
+    get heatSetpointWritable(): boolean {
+        return isHeatSetpointWritable(this.controlSetup);
+    }
+
+    /** False on Heat Only installations — unused cool setpoint writes NACK. */
+    get coolSetpointWritable(): boolean {
+        return isCoolSetpointWritable(this.controlSetup);
+    }
 }
 
 /**
@@ -317,9 +352,49 @@ export function shouldShowHeatBlastSetting(heatBlastEnabled: boolean | undefined
     return heatBlastEnabled === true;
 }
 
+/** Control §2.1: unused setpoint writes NACK on Heat Only / Cool Only. */
+export function isHeatSetpointWritable(controlSetup: ControlSetup | undefined): boolean {
+    return controlSetup !== ControlSetup.CoolOnly;
+}
+
+export function isCoolSetpointWritable(controlSetup: ControlSetup | undefined): boolean {
+    return controlSetup !== ControlSetup.HeatOnly;
+}
+
 export enum TemperatureScale {
     F = 0,
     C = 1
+}
+
+export enum ConnectedTo {
+    AprilaireCloud = 0,
+    AutomationSystem = 1
+}
+
+export enum EquipmentType {
+    HeatCool = 0,
+    HeatPump = 1
+}
+
+export enum ReversingValve {
+    EnergizedInCooling = 0,
+    EnergizedInHeating = 1
+}
+
+export enum ControlSetup {
+    HeatAndCool = 0,
+    HeatOnly = 1,
+    CoolOnly = 2
+}
+
+export enum FanControlHeating {
+    GasOil = 0,
+    Electric = 1
+}
+
+export enum ProgramFormat {
+    SevenDay = 0,
+    NonProgrammable = 1
 }
 
 export enum OutdoorSensorStatus {

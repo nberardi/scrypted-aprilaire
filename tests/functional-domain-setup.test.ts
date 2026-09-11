@@ -17,10 +17,14 @@ import { describe, expect, it } from "vitest";
 import {
     DateAndTimeRequest,
     DateAndTimeResponse,
+    ControlSetup,
     DEFAULT_DEADBAND_C,
     deadbandIndexToCelsius,
     deadbandToCelsius,
+    EquipmentType,
     filterHoldChoicesForInstaller,
+    isCoolSetpointWritable,
+    isHeatSetpointWritable,
     isServiceReminderEnabled,
     OutdoorSensorStatus,
     ScaleRequest,
@@ -471,6 +475,29 @@ describe("Setup domain", () => {
             expect(deadbandIndexToCelsius(res.deadband)).toBe(1.5);
             // Guide-style default 3°F → 1.5°C
             expect(deadbandIndexToCelsius(res.deadband)).toBe(DEFAULT_DEADBAND_C);
+        });
+    });
+
+    describe("Control Setup (§1.1 byte 4) — unused-setpoint NACK guard", () => {
+        it("parses controlSetup and equipmentType at documented offsets", () => {
+            const payload = Buffer.alloc(56, 0);
+            payload[1] = EquipmentType.HeatPump;
+            payload[4] = ControlSetup.HeatOnly;
+            const res = new ThermostatInstallerSettingsResponse(payload);
+            expect(res.equipmentType).toBe(EquipmentType.HeatPump);
+            expect(res.controlSetup).toBe(ControlSetup.HeatOnly);
+            expect(res.heatSetpointWritable).toBe(true);
+            expect(res.coolSetpointWritable).toBe(false);
+        });
+
+        it("isHeatSetpointWritable / isCoolSetpointWritable match §2.1", () => {
+            expect(isHeatSetpointWritable(ControlSetup.HeatAndCool)).toBe(true);
+            expect(isCoolSetpointWritable(ControlSetup.HeatAndCool)).toBe(true);
+            expect(isHeatSetpointWritable(ControlSetup.HeatOnly)).toBe(true);
+            expect(isCoolSetpointWritable(ControlSetup.HeatOnly)).toBe(false);
+            expect(isHeatSetpointWritable(ControlSetup.CoolOnly)).toBe(false);
+            expect(isCoolSetpointWritable(ControlSetup.CoolOnly)).toBe(true);
+            expect(isHeatSetpointWritable(undefined)).toBe(true);
         });
     });
 

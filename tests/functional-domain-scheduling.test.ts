@@ -15,8 +15,15 @@ import {
     holdTypeToUiValue,
     holdUiValueToHoldType,
     HoldType,
+    ScheduleDayIndex,
+    ScheduleDayReadRequest,
+    ScheduleDayRequest,
+    ScheduleDayResponse,
     ScheduleHoldRequest,
     ScheduleHoldResponse,
+    ScheduleProgramType,
+    ScheduleSettingsRequest,
+    ScheduleSettingsResponse,
 } from "../src/FunctionalDomainScheduling";
 import { FanModeSetting } from "../src/FunctionalDomainControl";
 import {
@@ -479,6 +486,62 @@ describe("Scheduling domainx", () => {
             expect(res.heatBlast).toBe(true);
             expect(res.domain).toBe(FunctionalDomain.Scheduling);
             expect(res.attribute).toBe(GuideAttribute.Scheduling.HeatBlast);
+        });
+    });
+
+    describe(" Schedule Settings (§3.1)", () => {
+        it("writes 1-byte programmable / non-programmable", () => {
+            const req = new ScheduleSettingsRequest();
+            req.programType = ScheduleProgramType.NonProgrammable;
+            expect(req.attribute).toBe(GuideAttribute.Scheduling.ScheduleSettings);
+            expect(req.toBuffer()).toEqual(Buffer.from([1]));
+            expect(new ScheduleSettingsResponse(Buffer.from([0])).programType).toBe(
+                ScheduleProgramType.Programmable
+            );
+        });
+    });
+
+    describe(" Schedule Day (§3.3)", () => {
+        it("read request sends a 1-byte day selector (0–6)", () => {
+            const req = new ScheduleDayReadRequest(ScheduleDayIndex.Wednesday);
+            expect(req.attribute).toBe(GuideAttribute.Scheduling.ScheduleDay);
+            expect(req.toReadBuffer()).toEqual(Buffer.from([3]));
+            expect(req.toBuffer().length).toBe(0);
+        });
+
+        it("write payload is 21 bytes: day + four 5-byte events", () => {
+            const req = new ScheduleDayRequest();
+            req.day = ScheduleDayIndex.Monday;
+            req.wake = {
+                startMinute: 0,
+                startHour: 6,
+                fan: FanModeSetting.Auto,
+                heatSetpoint: 21,
+                coolSetpoint: 26.5,
+            };
+            const buf = req.toBuffer();
+            expect(buf.length).toBe(21);
+            expect(buf[0]).toBe(ScheduleDayIndex.Monday);
+            expect(buf[1]).toBe(0);
+            expect(buf[2]).toBe(6);
+            expect(buf[3]).toBe(FanModeSetting.Auto);
+            expect(buf[4]).toBe(guideEncodeTemperature(21));
+            expect(buf[5]).toBe(guideEncodeTemperature(26.5));
+        });
+
+        it("parses a 21-byte read/COS body", () => {
+            const wire = Buffer.alloc(21, 0);
+            wire[0] = ScheduleDayIndex.Saturday;
+            wire[17] = 22; // sleep hour
+            wire[18] = FanModeSetting.On;
+            wire[19] = guideEncodeTemperature(18);
+            wire[20] = guideEncodeTemperature(24);
+            const res = new ScheduleDayResponse(wire);
+            expect(res.day).toBe(ScheduleDayIndex.Saturday);
+            expect(res.sleep.startHour).toBe(22);
+            expect(res.sleep.fan).toBe(FanModeSetting.On);
+            expect(res.sleep.heatSetpoint).toBe(18);
+            expect(res.sleep.coolSetpoint).toBe(24);
         });
     });
 });

@@ -4,8 +4,12 @@
 import { describe, expect, it } from "vitest";
 import {
     AlertStatus,
+    AlertsSettingsRequest,
+    AlertsSettingsResponse,
     AlertsStatusResponse,
     HighLowAlertStatus,
+    ServiceReminderWrite,
+    ServiceRemindersStatusRequest,
     ServiceRemindersStatusResponse,
     WirelessSensorAlertStatus,
 } from "../src/FunctionalDomainAlerts";
@@ -71,6 +75,49 @@ describe("Alerts domainx", () => {
             expect(WirelessSensorAlertStatus.EcmModuleError).toBe(1);
             expect(WirelessSensorAlertStatus.WirelessSensorError).toBe(2);
             expect(WirelessSensorAlertStatus.LowBattery).toBe(3);
+        });
+    });
+
+    describe(" Service Reminders write (§4.1)", () => {
+        it("clear helper sets only requested flags to 0 (Clear)", () => {
+            const req = ServiceRemindersStatusRequest.clear({ airFilter: true });
+            const buf = req.toBuffer();
+            expect(req.attribute).toBe(GuideAttribute.Alerts.ServiceRemindersStatus);
+            expect(buf.length).toBe(10);
+            expect(buf[0]).toBe(ServiceReminderWrite.Set);
+            expect(buf[1]).toBe(ServiceReminderWrite.Clear);
+            expect(buf[2]).toBe(ServiceReminderWrite.Set);
+        });
+    });
+
+    describe(" Alerts Settings (§4.3)", () => {
+        it("writes 21-byte enable/index/percent layout with reserved tail", () => {
+            const req = new AlertsSettingsRequest();
+            req.highIndoorTempEnabled = true;
+            req.highIndoorTempIndex = 20;
+            req.lowIndoorRhEnabled = true;
+            req.lowIndoorRhPercent = 30;
+            const buf = req.toBuffer();
+            expect(req.attribute).toBe(GuideAttribute.Alerts.AlertsSettings);
+            expect(buf.length).toBe(21);
+            expect(buf[0]).toBe(1);
+            expect(buf[1]).toBe(20);
+            expect(buf[6]).toBe(1);
+            expect(buf[7]).toBe(30);
+            expect(buf.subarray(8).every((b) => b === 0)).toBe(true);
+        });
+
+        it("parses enable flags and setpoints", () => {
+            const wire = Buffer.alloc(21, 0);
+            wire[0] = 1;
+            wire[1] = 15;
+            wire[4] = 1;
+            wire[5] = 70;
+            const res = new AlertsSettingsResponse(wire);
+            expect(res.highIndoorTempEnabled).toBe(true);
+            expect(res.highIndoorTempIndex).toBe(15);
+            expect(res.highIndoorRhEnabled).toBe(true);
+            expect(res.highIndoorRhPercent).toBe(70);
         });
     });
 });
