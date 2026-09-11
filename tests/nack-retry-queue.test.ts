@@ -11,6 +11,7 @@ import {
 } from "../src/AprilaireClient";
 import { NackResponse } from "../src/BasePayloadResponse";
 import {
+    HOST_SEQUENCE_COUNT,
     isRetryableNack,
     NACK_RETRY_DELAY_MS,
     NACK_RETRY_MAX_ATTEMPTS,
@@ -125,13 +126,16 @@ describe("OutboundRequestQueue", () => {
         expect(queue.getInFlight(1)?.request.attribute).toBe(2);
     });
 
-    it("wraps sequence at 127 (HA range 0–126)", () => {
-        for (let i = 0; i < 126; i++) {
-            queue.enqueue(sampleRequest());
+    // Packet Frame: home automation owns sequence 0–127 and the thermostat owns
+    // 128–255, so all 128 host values must be usable before wrapping.
+    it("uses the full host sequence range 0–127 before wrapping", () => {
+        for (let i = 0; i < HOST_SEQUENCE_COUNT - 1; i++) {
+            expect(queue.enqueue(sampleRequest())).toBe(i);
         }
-        expect(queue.nextSequence).toBe(126);
+        expect(queue.nextSequence).toBe(127);
+
         const seq = queue.enqueue(sampleRequest());
-        expect(seq).toBe(126);
+        expect(seq).toBe(127);
         expect(queue.nextSequence).toBe(0);
     });
 
@@ -284,6 +288,88 @@ describe("OutboundRequestQueue", () => {
         expect(customSent).toHaveLength(2);
 
         custom.reset();
+    });
+
+    describe("transport readiness gate", () => {
+        /**
+         * A frame written to a connecting or destroyed socket is buffered and then
+         * discarded, but the sequence number is already spent and the request is
+         * tracked as in flight. Holding commands until the socket reports ready
+         * keeps the sequence space and the wire in agreement.
+         */
+        function gatedQueue(writable: { value: boolean }) {
+            const frames: Buffer[] = [];
+            const q = new OutboundRequestQueue(
+                buildTestFrame,
+                (frame) => frames.push(Buffer.from(frame)),
+                (cb, ms) => {
+                    const handle = setTimeout(cb, ms);
+                    return () => clearTimeout(handle);
+                },
+                { canSend: () => writable.value }
+            );
+            return { q, frames };
+        }
+
+        it("holds commands while the transport cannot send", () => {
+            const writable = { value: false };
+            const { q, frames } = gatedQueue(writable);
+
+            expect(q.enqueue(sampleRequest(1))).toBe(-1);
+            expect(q.enqueue(sampleRequest(2))).toBe(-1);
+            expect(frames).toHaveLength(0);
+            expect(q.pendingCount).toBe(2);
+            // No sequence is consumed for a command that never reached the wire.
+            expect(q.nextSequence).toBe(0);
+
+            q.reset();
+        });
+
+        it("sends held commands in order once the transport is writable", () => {
+            const writable = { value: false };
+            const { q, frames } = gatedQueue(writable);
+
+            q.enqueue(sampleRequest(1));
+            q.enqueue(sampleRequest(2));
+
+            writable.value = true;
+            q.flush();
+
+            expect(frames).toHaveLength(2);
+            expect(frames[0].readUint8(1)).toBe(0);
+            expect(frames[0].readUint8(6)).toBe(1);
+            expect(frames[1].readUint8(1)).toBe(1);
+            expect(frames[1].readUint8(6)).toBe(2);
+            expect(q.pendingCount).toBe(0);
+
+            q.reset();
+        });
+
+        it("sends immediately while the transport stays writable", () => {
+            const writable = { value: true };
+            const { q, frames } = gatedQueue(writable);
+
+            expect(q.enqueue(sampleRequest(5))).toBe(0);
+            expect(frames).toHaveLength(1);
+
+            q.reset();
+        });
+
+        it("drops commands queued while down instead of replaying stale writes", () => {
+            const writable = { value: false };
+            const { q, frames } = gatedQueue(writable);
+
+            q.enqueue(sampleRequest(1));
+            // Reconnect clears the queue: a write held through an outage would be
+            // applied against thermostat state that has since changed.
+            q.reset();
+
+            writable.value = true;
+            q.flush();
+
+            expect(frames).toHaveLength(0);
+            expect(q.pendingCount).toBe(0);
+        });
     });
 
     it("reset cancels pending retries and drops state", () => {

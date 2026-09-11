@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
     convertByteToTemperature,
     convertTemperatureToByte,
+    MAX_ENCODABLE_TEMPERATURE_C,
 } from "../src/AprilaireClient";
 import {
     guideDecodeTemperature,
@@ -112,6 +113,42 @@ describe("Protocol temperature encoding ", () => {
             // that ambiguity is documented in the guide and accepted on the wire.
             expect(guideEncodeTemperature(0)).toBe(0);
             expect(convertTemperatureToByte(0)).toBe(0);
+        });
+    });
+
+    describe("values outside the encodable range", () => {
+        // Only bits 5-0 carry magnitude, so 64 °C and up wrap into a small,
+        // entirely plausible temperature. Clamping keeps the wire value at the
+        // range edge, where the thermostat answers NACK 0x10 (write value out of
+        // range) and the transaction fails visibly instead of silently applying
+        // the wrong setpoint.
+        it("encodes the largest representable magnitude exactly", () => {
+            expect(convertTemperatureToByte(MAX_ENCODABLE_TEMPERATURE_C)).toBe(0x7f);
+            expect(convertByteToTemperature(0x7f)).toBe(MAX_ENCODABLE_TEMPERATURE_C);
+        });
+
+        it("clamps rather than wrapping past the magnitude bits", () => {
+            for (const celsius of [64, 64.5, 100, 1000]) {
+                const encoded = convertTemperatureToByte(celsius);
+                expect(convertByteToTemperature(encoded)).toBe(MAX_ENCODABLE_TEMPERATURE_C);
+            }
+        });
+
+        it("clamps negative magnitudes and keeps the sign bit", () => {
+            const encoded = convertTemperatureToByte(-100);
+            expect(encoded & 0x80).toBe(0x80);
+            expect(convertByteToTemperature(encoded)).toBe(-MAX_ENCODABLE_TEMPERATURE_C);
+        });
+
+        it("encodes a non-finite temperature as Null instead of throwing", () => {
+            expect(convertTemperatureToByte(Number.NaN)).toBe(0);
+            expect(convertTemperatureToByte(Number.POSITIVE_INFINITY)).toBe(0);
+        });
+
+        it("still encodes the guide's out-of-range NACK example verbatim", () => {
+            // 43.5 °C is out of the setpoint range but inside the encodable range,
+            // so it must reach the wire unchanged for the thermostat to reject.
+            expect(convertTemperatureToByte(43.5)).toBe(0x6b);
         });
     });
 });

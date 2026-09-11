@@ -23,6 +23,9 @@ npm run test:watch
 | `functional-domain-alerts.test.ts` | Alerts domain |
 | `functional-domain-setup.test.ts` | Setup domain |
 | `best-practices-bootstrap.test.ts` | Connect checklist |
+| `tcp-frame-reassembly.test.ts` | Stream framing, partial/batched frames, per-pass cap |
+| `nack-retry-queue.test.ts` | Sequence allocation, NACK retry policy, transport gating |
+| `connection-supervisor.test.ts` | Reconnect backoff, connect timeout, liveness probe |
 
 ## Interpreting failures
 
