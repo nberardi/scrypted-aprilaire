@@ -47,6 +47,24 @@ function isTemperatureSensorOk(status: TemperatureSensorStatus): boolean {
     return status === TemperatureSensorStatus.NoError;
 }
 
+/**
+ * How long device creation waits for Identification to complete.
+ *
+ * `createDevice` and `getDevice` await this, so an unreachable or wrong-port
+ * address used to hang the Scrypted UI indefinitely. The client keeps
+ * supervising and reconnecting after the timeout; only this discovery attempt
+ * gives up so the caller gets an error it can show.
+ */
+const DISCOVERY_READY_TIMEOUT_MS = 30_000;
+
+export interface AprilaireDiscoveryResult {
+    nativeId: string;
+    device: Device;
+    thermostat: AprilaireThermostat;
+    humidifier?: AprilaireHumidifier;
+    dehumidifier?: AprilaireDehumidifier;
+}
+
 export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvider, DeviceCreator, Settings {
     storageSettings = new StorageSettings(this, {
         syncOutdoorSensor: {
@@ -73,7 +91,20 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         }
     });
 
+    /** Discovered thermostats keyed by MAC. */
     clients = new Map<string, AprilaireClient>();
+    /**
+     * One client per `host:port`, created before identification completes.
+     *
+     * The guide notes a thermostat effectively supports a single home-automation
+     * TCP session, and Scrypted calls `getDevice` once per child device on
+     * startup. Without this map the concurrent calls for `mac`, `mac-humidifier`
+     * and `mac-dehumidifier` each opened their own socket to the same
+     * thermostat before the first one finished identifying.
+     */
+    private clientsByEndpoint = new Map<string, AprilaireClient>();
+    /** In-flight/completed discovery per `host:port`, so callers share one attempt. */
+    private discoveryByEndpoint = new Map<string, Promise<AprilaireDiscoveryResult>>();
     thermostats = new Map<string, AprilaireThermostat | AprilaireHumidifier | AprilaireDehumidifier>();
     outdoorSensors = new Map<string, AprilaireOutdoorThermometer>();
     /** Keyed by full nativeId (`mac|RAT`, `mac|LAT`, `mac|RemoteTemperature`). */
@@ -110,6 +141,38 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             const mac = nativeId.replace(NATIVE_OUTDOOR, "");
             this.outdoorSensors.delete(mac);
         }
+
+        // The root nativeId is the MAC: releasing it means the thermostat itself is
+        // gone, so stop supervising its socket instead of reconnecting forever.
+        if (this.clients.has(nativeId))
+            this.releaseClient(nativeId);
+    }
+
+    /** Stop supervision and drop every cached reference for one thermostat. */
+    private releaseClient(mac: string): void {
+        const client = this.clients.get(mac);
+        this.clients.delete(mac);
+
+        for (const [endpoint, candidate] of this.clientsByEndpoint) {
+            if (candidate !== client)
+                continue;
+            this.clientsByEndpoint.delete(endpoint);
+            this.discoveryByEndpoint.delete(endpoint);
+        }
+
+        this.outdoorSensorMode.delete(mac);
+        this.automatedOutdoorSensors = this.automatedOutdoorSensors.filter((m) => m !== mac);
+
+        if (!client)
+            return;
+
+        try {
+            client.disconnect();
+        } catch (e) {
+            this.console.warn(`[${mac}] disconnect during release failed: ${e}`);
+        }
+        client.removeAllListeners();
+        this.console.info(`[${mac}] released client and stopped reconnect supervision`);
     }
 
     private setupOutdoorsSensorsInterval(oldValue: any, newValue: any) {
@@ -511,7 +574,15 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             const host = s.getItem("host");
             const port = Number(s.getItem("port"));
 
-            await this.connectThermostat(host, port);
+            // Scrypted resolves each child device separately at startup; a
+            // failure here must not reject every sibling lookup, and the shared
+            // discovery promise keeps all of them on one TCP session.
+            try {
+                await this.connectThermostat(host, port);
+            } catch (e) {
+                this.console.warn(`[${nativeId}] connect failed: ${e}`);
+                return undefined;
+            }
 
             if (this.thermostats.has(nativeId))
                 return this.thermostats.get(nativeId);
@@ -647,141 +718,234 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         }
     }
 
-    private connectThermostat(host: string, port: number) : Promise<any> {
-        if (host === undefined || isNaN(port))
-            return Promise.reject("host and port are required");
+    /**
+     * Connect (or reuse a connection) and discover the devices behind one
+     * thermostat. Concurrent callers for the same `host:port` share a single
+     * client and a single discovery attempt.
+     */
+    private connectThermostat(host: string, port: number): Promise<AprilaireDiscoveryResult> {
+        if (host === undefined || host === null || host === "" || isNaN(port))
+            return Promise.reject(new Error("host and port are required"));
+
+        const endpoint = `${host}:${port}`;
+        const existing = this.discoveryByEndpoint.get(endpoint);
+        if (existing)
+            return existing;
+
+        const attempt = this.discoverThermostat(host, port).catch((e) => {
+            // Drop only the failed attempt; the client stays and keeps
+            // reconnecting, so a later getDevice/createDevice can succeed
+            // without opening a second session.
+            this.discoveryByEndpoint.delete(endpoint);
+            throw e;
+        });
+
+        this.discoveryByEndpoint.set(endpoint, attempt);
+        return attempt;
+    }
+
+    /** Create the supervised client for an endpoint exactly once. */
+    private getOrCreateClient(host: string, port: number): AprilaireClient {
+        const endpoint = `${host}:${port}`;
+        const existing = this.clientsByEndpoint.get(endpoint);
+        if (existing)
+            return existing;
 
         const client = new AprilaireClient(host, port);
+        client.on("response", this.responseReceived.bind(this));
+        client.on("name", (c: AprilaireClient) => {
+            void this.applyClientDisplayName(c);
+        });
+        client.on("connected", (c: AprilaireClient) => {
+            // First connect is bootstrapped by publishDevices once identification
+            // completes; a MAC we already discovered means this is a reconnect and
+            // the session-scoped COS/Sync state has to be re-established.
+            if (c.mac && this.clients.has(c.mac))
+                this.bootstrapThermostat(c);
+        });
+
+        this.clientsByEndpoint.set(endpoint, client);
+        client.connect();
+        return client;
+    }
+
+    private discoverThermostat(host: string, port: number): Promise<AprilaireDiscoveryResult> {
+        const self = this;
+        const client = this.getOrCreateClient(host, port);
+
+        return new Promise<AprilaireDiscoveryResult>((resolve, reject) => {
+            let settled = false;
+
+            const readyTimer = setTimeout(() => {
+                if (settled)
+                    return;
+                settled = true;
+                reject(new Error(
+                    `[${host}:${port}] thermostat did not complete identification within ${DISCOVERY_READY_TIMEOUT_MS}ms; ` +
+                    `check the IP address and port (8000 for 8800 series, 7000 for 6000 series)`
+                ));
+            }, DISCOVERY_READY_TIMEOUT_MS);
+            readyTimer.unref?.();
+
+            const onReady = async () => {
+                if (settled)
+                    return;
+                settled = true;
+                clearTimeout(readyTimer);
+
+                try {
+                    resolve(await self.publishDevices(client, host, port));
+                } catch (e) {
+                    reject(e);
+                }
+            };
+
+            // Already identified (endpoint reused after an earlier timeout).
+            if (client.isReady) {
+                void onReady();
+                return;
+            }
+
+            client.once("ready", () => { void onReady(); });
+        });
+    }
+
+    /**
+     * Register the thermostat and its optional humidifier/dehumidifier with
+     * Scrypted, then run the connect-time bootstrap reads.
+     */
+    private async publishDevices(client: AprilaireClient, host: string, port: number): Promise<AprilaireDiscoveryResult> {
         const self = this;
 
-        client.on("response", self.responseReceived.bind(self));
-        client.on("name", (c: AprilaireClient) => {
-            void self.applyClientDisplayName(c);
-        });
+        const devices: Device[] = [];
 
-        return new Promise<any>((resolve) => {
-            client.connect();
-            client.once("ready", async () => {
+        // If name already settled (including real names learned during the grace wait),
+        // use it; otherwise temporary fallback until settleName/emit renames.
+        const d: Device = {
+            providerNativeId: self.nativeId,
+            name: client.name,
+            type: ScryptedDeviceType.Thermostat,
+            nativeId: client.mac,
+            interfaces: [
+                ScryptedInterface.OnOff,
+                ScryptedInterface.Online,
+                ScryptedInterface.Refresh,
+                ScryptedInterface.Settings,
+                ScryptedInterface.TemperatureSetting,
+                ScryptedInterface.Fan,
+                ScryptedInterface.Thermometer,
+                ScryptedInterface.HumiditySensor,
+                ScryptedInterface.FilterMaintenance,
+            ],
+            info: {
+                model: client.model,
+                manufacturer: "Aprilaire",
+                serialNumber: client.mac,
+                firmware: client.firmware,
+                version: client.hardware
+            }
+        };
 
-                const devices: Device[] = [];
+        // add humidity setting if either a humidifier or dehumidifer is supported so that TargetRelativeHumidity can be published to HomeKit
+        if (client.system.humidification || client.system.dehumidification) {
+            d.interfaces.push(ScryptedInterface.HumiditySetting);
+        }
 
-                // If name already settled (including real names learned during the grace wait),
-                // use it; otherwise temporary fallback until settleName/emit renames.
-                const d: Device = {
-                    providerNativeId: self.nativeId,
-                    name: client.name,
-                    type: ScryptedDeviceType.Thermostat,
-                    nativeId: client.mac,
-                    interfaces: [
-                        ScryptedInterface.OnOff,
-                        ScryptedInterface.Online,
-                        ScryptedInterface.Refresh,
-                        ScryptedInterface.Settings,
-                        ScryptedInterface.TemperatureSetting,
-                        ScryptedInterface.Fan,
-                        ScryptedInterface.Thermometer,
-                        ScryptedInterface.HumiditySensor,
-                        ScryptedInterface.FilterMaintenance,
-                    ],
-                    info: {
-                        model: client.model,
-                        manufacturer: "Aprilaire",
-                        serialNumber: client.mac,
-                        firmware: client.firmware,
-                        version: client.hardware
-                    }
-                };
+        await deviceManager.onDeviceDiscovered(d);
+        devices.push(d);
 
-                // add humidity setting if either a humidifier or dehumidifer is supported so that TargetRelativeHumidity can be published to HomeKit
-                if (client.system.humidification || client.system.dehumidification) {
-                    d.interfaces.push(ScryptedInterface.HumiditySetting);
-                }
+        self.clients.set(d.nativeId, client);
 
-                await deviceManager.onDeviceDiscovered(d);
-                devices.push(d);
+        const t = new AprilaireThermostat(d.nativeId, client);
+        let hum: AprilaireHumidifier;
+        let deHum: AprilaireDehumidifier;
 
-                self.clients.set(d.nativeId, client);
+        self.thermostats.set(d.nativeId, t);
 
-                const t = new AprilaireThermostat(d.nativeId, client);
-                let hum:AprilaireHumidifier;
-                let deHum:AprilaireDehumidifier;
+        if (client.system.humidification) {
+            const dh = { ...d };
+            dh.interfaces = [
+                ScryptedInterface.OnOff,
+                ScryptedInterface.Online,
+                ScryptedInterface.Refresh,
+                ScryptedInterface.HumiditySetting,
+                ScryptedInterface.HumiditySensor,
+                ScryptedInterface.FilterMaintenance,
+                ScryptedInterface.Fan
+            ];
+            dh.nativeId = client.mac + "-humidifier";
+            dh.name = client.name + " Humidifier";
+            dh.type = ScryptedDeviceType.Fan;
 
-                self.thermostats.set(d.nativeId, t);
+            await deviceManager.onDeviceDiscovered(dh);
+            devices.push(dh);
 
-                if (client.system.humidification) {
-                    const dh = { ...d };
-                    dh.interfaces = [
-                        ScryptedInterface.OnOff,
-                        ScryptedInterface.Online,
-                        ScryptedInterface.Refresh,
-                        ScryptedInterface.HumiditySetting,
-                        ScryptedInterface.HumiditySensor,
-                        ScryptedInterface.FilterMaintenance,
-                        ScryptedInterface.Fan
-                    ];
-                    dh.nativeId = client.mac + "-humidifier";
-                    dh.name = client.name + " Humidifier";
-                    dh.type = ScryptedDeviceType.Fan;
+            hum = new AprilaireHumidifier(dh.nativeId, client);
+            self.thermostats.set(dh.nativeId, hum);
+        }
 
-                    await deviceManager.onDeviceDiscovered(dh);
-                    devices.push(dh);
+        if (client.system.dehumidification) {
+            const dh = { ...d };
+            dh.interfaces = [
+                ScryptedInterface.OnOff,
+                ScryptedInterface.Online,
+                ScryptedInterface.Refresh,
+                ScryptedInterface.HumiditySetting,
+                ScryptedInterface.HumiditySensor,
+                ScryptedInterface.FilterMaintenance,
+                ScryptedInterface.Fan
+            ];
+            dh.nativeId = client.mac + "-dehumidifier";
+            dh.name = client.name + " Dehumidifier";
+            dh.type = ScryptedDeviceType.Fan;
 
-                    hum = new AprilaireHumidifier(dh.nativeId, client);
-                    self.thermostats.set(dh.nativeId, hum);
-                } 
-                
-                if (client.system.dehumidification) {
-                    const dh = { ...d };
-                    dh.interfaces = [
-                        ScryptedInterface.OnOff,
-                        ScryptedInterface.Online,
-                        ScryptedInterface.Refresh,
-                        ScryptedInterface.HumiditySetting,
-                        ScryptedInterface.HumiditySensor,
-                        ScryptedInterface.FilterMaintenance,
-                        ScryptedInterface.Fan
-                    ];
-                    dh.nativeId = client.mac + "-dehumidifier";
-                    dh.name = client.name + " Dehumidifier";
-                    dh.type = ScryptedDeviceType.Fan;
+            await deviceManager.onDeviceDiscovered(dh);
+            devices.push(dh);
 
-                    await deviceManager.onDeviceDiscovered(dh);
-                    devices.push(dh);
+            deHum = new AprilaireDehumidifier(dh.nativeId, client);
+            self.thermostats.set(dh.nativeId, deHum);
+        }
 
-                    deHum = new AprilaireDehumidifier(dh.nativeId, client);
-                    self.thermostats.set(dh.nativeId, deHum);
-                }
+        const s = deviceManager.getDeviceStorage(d.nativeId);
+        s.setItem("host", host);
+        s.setItem("port", port.toString());
 
-                const s = deviceManager.getDeviceStorage(d.nativeId);
-                s.setItem("host", host);
-                s.setItem("port", port.toString());
+        // Force UI name immediately (existing devices keep their first name otherwise).
+        await self.applyClientDisplayName(client);
 
-                // Force UI name immediately (existing devices keep their first name otherwise).
-                await self.applyClientDisplayName(client);
+        self.bootstrapThermostat(client);
 
-                // Explicit Setup/1 read for deadband / Away / Heat Blast gates (also COS-subscribed).
-                client.read(new ThermostatInstallerSettingsRequest());
-                // Full §5.1 sensor array (COS=No — must ReadRequest; return/supply air, wireless outdoor).
-                client.read(new SensorValuesRequest());
-                // Sync dumps current state for all COS-subscribed attributes (includes Setup/1).
-                client.write(new SyncRequest());
-                // Re-read Sensor Values + name shortly after connect in case replies are lost
-                // behind the identification/COS/sync burst.
-                setTimeout(() => {
-                    if (!client.mac)
-                        return;
-                    client.read(new SensorValuesRequest());
-                    client.requestThermostatName();
-                }, 3000);
-                // Late name recovery: re-apply whatever we have after the grace/re-read window.
-                setTimeout(() => {
-                    if (client.mac)
-                        void self.applyClientDisplayName(client);
-                }, 5000);
+        return { nativeId: d.nativeId, device: d, thermostat: t, humidifier: hum, dehumidifier: deHum };
+    }
 
-                resolve({nativeId: d.nativeId, device: d, thermostat: t, humidifier: hum, dehumidifier: deHum});
-            });
-        });
+    /**
+     * Connect-time sync per the guide's Best Practices checklist. Re-run on every
+     * reconnect: COS subscriptions and the Sync dump are per-session, so a
+     * reconnected thermostat that only re-identifies would leave the plugin
+     * holding pre-outage state.
+     */
+    private bootstrapThermostat(client: AprilaireClient): void {
+        const self = this;
+
+        // Explicit Setup/1 read for deadband / Away / Heat Blast gates (also COS-subscribed).
+        client.read(new ThermostatInstallerSettingsRequest());
+        // Full §5.1 sensor array (COS=No — must ReadRequest; return/supply air, wireless outdoor).
+        client.read(new SensorValuesRequest());
+        // Sync dumps current state for all COS-subscribed attributes (includes Setup/1).
+        client.write(new SyncRequest());
+        // Re-read Sensor Values + name shortly after connect in case replies are lost
+        // behind the identification/COS/sync burst.
+        setTimeout(() => {
+            if (!client.mac)
+                return;
+            client.read(new SensorValuesRequest());
+            client.requestThermostatName();
+        }, 3000).unref?.();
+        // Late name recovery: re-apply whatever we have after the grace/re-read window.
+        setTimeout(() => {
+            if (client.mac)
+                void self.applyClientDisplayName(client);
+        }, 5000).unref?.();
     }
 
     async createDevice(settings: DeviceCreatorSettings): Promise<string> {
