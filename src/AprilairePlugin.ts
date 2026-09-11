@@ -660,8 +660,27 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         });
 
         return new Promise<any>((resolve) => {
+            let discovered = false;
+
+            const resyncAfterReady = () => {
+                // Explicit Setup/1 read for deadband / Away / Heat Blast gates (also COS-subscribed).
+                client.read(new ThermostatInstallerSettingsRequest());
+                // Full §5.1 sensor array (COS=No — must ReadRequest; return/supply air, wireless outdoor).
+                client.read(new SensorValuesRequest());
+                // Sync dumps current state for all COS-subscribed attributes (includes Setup/1).
+                client.write(new SyncRequest());
+            };
+
             client.connect();
-            client.once("ready", async () => {
+            client.on("ready", async () => {
+                // Reconnect: devices already exist; re-run Sync + key reads only.
+                if (discovered) {
+                    self.console.info(`[${client.mac}] client ready after reconnect — re-syncing`);
+                    resyncAfterReady();
+                    client.requestThermostatName();
+                    return;
+                }
+                discovered = true;
 
                 const devices: Device[] = [];
 
@@ -759,12 +778,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 // Force UI name immediately (existing devices keep their first name otherwise).
                 await self.applyClientDisplayName(client);
 
-                // Explicit Setup/1 read for deadband / Away / Heat Blast gates (also COS-subscribed).
-                client.read(new ThermostatInstallerSettingsRequest());
-                // Full §5.1 sensor array (COS=No — must ReadRequest; return/supply air, wireless outdoor).
-                client.read(new SensorValuesRequest());
-                // Sync dumps current state for all COS-subscribed attributes (includes Setup/1).
-                client.write(new SyncRequest());
+                resyncAfterReady();
                 // Re-read Sensor Values + name shortly after connect in case replies are lost
                 // behind the identification/COS/sync burst.
                 setTimeout(() => {

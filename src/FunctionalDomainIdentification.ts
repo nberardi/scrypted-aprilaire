@@ -1,4 +1,5 @@
 import { FunctionalDomain, FunctionalDomainIdentification } from "./AprilaireClient";
+import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse } from "./BasePayloadResponse";
 
 /*
@@ -10,9 +11,36 @@ import { BasePayloadResponse } from "./BasePayloadResponse";
 * --------------------------|-----------|-------|-------|---------------
 * Revision & Model          |   0x01    |   Yes |   R   |   X
 * MAC Address               |   0x02    |   No  |   R   |   X
-* Thermostat Name           |   0x05    |   No  |   R/W |   X
+* Thermostat Name           |   0x05    |   No  |   R/W |   X (read; write codec)
 *
 */
+
+/** Guide §8.5 — postal/location field width (NUL-padded). */
+export const THERMOSTAT_NAME_POSTAL_WIDTH = 7;
+/** Guide §8.5 — display name field width (NUL-padded). */
+export const THERMOSTAT_NAME_NAME_WIDTH = 15;
+
+/**
+ * Write Identification/Thermostat Name (§8.5).
+ * Layout: 7 ASCII postal + NUL + 15 ASCII name (+ trailing NUL in buffer).
+ */
+export class ThermostatNameRequest extends BasePayloadRequest {
+    postalCode: string = "";
+    name: string = "";
+
+    constructor() {
+        super(FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
+    }
+
+    toBuffer(): Buffer {
+        const payload = Buffer.alloc(THERMOSTAT_NAME_POSTAL_WIDTH + 1 + THERMOSTAT_NAME_NAME_WIDTH + 1, 0);
+        const postal = Buffer.from(sanitizeIdentificationText(this.postalCode).slice(0, THERMOSTAT_NAME_POSTAL_WIDTH), "ascii");
+        const name = Buffer.from(sanitizeIdentificationText(this.name).slice(0, THERMOSTAT_NAME_NAME_WIDTH), "ascii");
+        postal.copy(payload, 0);
+        name.copy(payload, THERMOSTAT_NAME_POSTAL_WIDTH + 1);
+        return payload;
+    }
+}
 
 export class ThermostatNameResponse extends BasePayloadResponse {
     postalCode: string;
@@ -96,6 +124,7 @@ export class RevisionAndModelResponse extends BasePayloadResponse {
             case 7: return "8840";
             case 14: return "8840M";
             case 28: return "6003";
+            default: return `Unknown(${byte})`;
         }
     }
 }

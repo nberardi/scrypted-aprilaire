@@ -295,8 +295,26 @@ describe("OutboundRequestQueue", () => {
         expect(queue.inFlightCount).toBe(0);
         expect(queue.pendingCount).toBe(0);
         expect(queue.isBlocked).toBe(false);
+        expect(queue.isTransportReady).toBe(false);
+        expect(queue.nextSequence).toBe(0);
 
         vi.advanceTimersByTime(NACK_RETRY_DELAY_MS * 3);
         expect(sent).toHaveLength(1); // no retry after reset
+    });
+
+    it("holds outbound frames until transport is ready", () => {
+        queue.reset(); // transportReady = false
+        expect(queue.isTransportReady).toBe(false);
+
+        const seq = queue.enqueue(sampleRequest(42));
+        expect(seq).toBe(-1);
+        expect(sent).toHaveLength(0);
+        expect(queue.pendingCount).toBe(1);
+
+        queue.setTransportReady(true);
+        expect(sent).toHaveLength(1);
+        expect(queue.pendingCount).toBe(0);
+        expect(queue.nextSequence).toBe(1);
+        expect(sent[0].readUint8(1)).toBe(0); // sequence 0
     });
 });

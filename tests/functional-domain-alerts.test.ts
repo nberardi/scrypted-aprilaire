@@ -6,6 +6,7 @@ import {
     AlertStatus,
     AlertsStatusResponse,
     HighLowAlertStatus,
+    ServiceRemindersStatusRequest,
     ServiceRemindersStatusResponse,
     WirelessSensorAlertStatus,
 } from "../src/FunctionalDomainAlerts";
@@ -36,6 +37,19 @@ describe("Alerts domainx", () => {
             expect(res.waterPanel).toBe(false);
             expect(res.hvacPercent).toBe(80);
             expect(res.airFilterPercent).toBe(10);
+        });
+
+        it("serializes clear write (§4.1): 0 clears, 1 leaves alone", () => {
+            const req = ServiceRemindersStatusRequest.clear({ airFilter: true, waterPanel: true });
+            expect(req.attribute).toBe(GuideAttribute.Alerts.ServiceRemindersStatus);
+            const buf = req.toBuffer();
+            expect(buf.length).toBe(10);
+            expect(buf[0]).toBe(1); // hvac leave
+            expect(buf[1]).toBe(0); // clear air filter
+            expect(buf[2]).toBe(0); // clear water panel
+            expect(buf[3]).toBe(1);
+            expect(buf[4]).toBe(1);
+            expect(buf.subarray(5)).toEqual(Buffer.alloc(5));
         });
     });
 

@@ -3,10 +3,16 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+    AirCleaningEvent,
+    AirCleaningMode,
+    AirCleaningSettingsRequest,
     AirCleaningSettingsResponse,
     DehumidificationSetpointRequest,
     DehumidificationSetpointResponse,
     FanModeSetting,
+    FreshAirEvent,
+    FreshAirMode,
+    FreshAirSettingsRequest,
     FreshAirSettingsResponse,
     HumidificationSetpointRequest,
     HumidificationSetpointResponse,
@@ -149,6 +155,14 @@ describe("Control domainx", () => {
             expect(res.event).toBe(2);
             expect(res.attribute).toBe(GuideAttribute.Control.FreshAirSetting);
         });
+
+        it("serializes Fresh Air write (§2.5)", () => {
+            const req = new FreshAirSettingsRequest();
+            req.mode = FreshAirMode.Auto;
+            req.event = FreshAirEvent.ThreeHourEvent;
+            expect(req.attribute).toBe(GuideAttribute.Control.FreshAirSetting);
+            expect(req.toBuffer()).toEqual(Buffer.from([1, 2]));
+        });
     });
 
     describe(" Air Cleaning Settings", () => {
@@ -158,6 +172,14 @@ describe("Control domainx", () => {
             expect(res.mode).toBe(2);
             expect(res.event).toBe(4);
             expect(res.attribute).toBe(GuideAttribute.Control.AirCleaningSetting);
+        });
+
+        it("serializes Air Cleaning write (§2.6)", () => {
+            const req = new AirCleaningSettingsRequest();
+            req.mode = AirCleaningMode.ConstantClean;
+            req.event = AirCleaningEvent.TwentyFourHourEvent;
+            expect(req.attribute).toBe(GuideAttribute.Control.AirCleaningSetting);
+            expect(req.toBuffer()).toEqual(Buffer.from([1, 4]));
         });
     });
 

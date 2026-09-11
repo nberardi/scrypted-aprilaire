@@ -105,8 +105,19 @@ export class ThermostatSetpointAndModeSettingsRequest extends BasePayloadRequest
         let payload = Buffer.alloc(4);
         payload.writeUint8(this.mode ?? ThermostatMode.Null, 0);
         payload.writeUint8(this.fan ?? FanModeSetting.Null, 1);
-        payload.writeUint8(this.heatSetpoint ? convertTemperatureToByte(this.heatSetpoint) : 0, 2);
-        payload.writeUint8(this.coolSetpoint ? convertTemperatureToByte(this.coolSetpoint) : 0, 3);
+        // 0x00 on the wire = Null (do not modify). Protocol cannot distinguish 0 °C.
+        payload.writeUint8(
+            this.heatSetpoint != null && this.heatSetpoint !== 0
+                ? convertTemperatureToByte(this.heatSetpoint)
+                : 0,
+            2
+        );
+        payload.writeUint8(
+            this.coolSetpoint != null && this.coolSetpoint !== 0
+                ? convertTemperatureToByte(this.coolSetpoint)
+                : 0,
+            3
+        );
         return payload;
     }
 }
@@ -172,6 +183,23 @@ export class FreshAirSettingsResponse extends BasePayloadResponse {
     }
 }
 
+/** Write Control/Fresh Air Setting (§2.5) — 2 bytes: mode + event. */
+export class FreshAirSettingsRequest extends BasePayloadRequest {
+    mode: FreshAirMode = FreshAirMode.Off;
+    event: FreshAirEvent = FreshAirEvent.Off;
+
+    constructor() {
+        super(FunctionalDomain.Control, FunctionalDomainControl.FreshAirSetting);
+    }
+
+    toBuffer(): Buffer {
+        const payload = Buffer.alloc(2);
+        payload.writeUint8(this.mode, 0);
+        payload.writeUint8(this.event, 1);
+        return payload;
+    }
+}
+
 export class AirCleaningSettingsResponse extends BasePayloadResponse {
     mode: AirCleaningMode;
     event: AirCleaningEvent;
@@ -180,6 +208,23 @@ export class AirCleaningSettingsResponse extends BasePayloadResponse {
 
         this.mode = payload.readUint8(0);
         this.event = payload.readUint8(1);
+    }
+}
+
+/** Write Control/Air Cleaning Settings (§2.6) — 2 bytes: mode + event. */
+export class AirCleaningSettingsRequest extends BasePayloadRequest {
+    mode: AirCleaningMode = AirCleaningMode.Off;
+    event: AirCleaningEvent = AirCleaningEvent.Off;
+
+    constructor() {
+        super(FunctionalDomain.Control, FunctionalDomainControl.AirCleaningSetting);
+    }
+
+    toBuffer(): Buffer {
+        const payload = Buffer.alloc(2);
+        payload.writeUint8(this.mode, 0);
+        payload.writeUint8(this.event, 1);
+        return payload;
     }
 }
 

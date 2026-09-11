@@ -98,6 +98,9 @@ export class AprilaireClient extends EventEmitter {
         this.client.once("disconnected", (err?: Error) => {
             self.stopDateTimeResync();
             self.clearNameWait();
+            // Allow a later reconnect to emit "ready" again (plugin re-Syncs).
+            self.ready = false;
+            self.nameNacks.clear();
             self.emit("disconnected", self, err);
         });
         this.client.on("response", (response: BasePayloadResponse) => {
@@ -1087,6 +1090,8 @@ class AprilaireSocket extends EventEmitter {
             console.debug(self.format(`ready`));
 
             self._connected = true;
+            // Drain any commands queued while the socket was down.
+            self.outboundQueue.setTransportReady(true);
             self.emit('connected');
         });
 

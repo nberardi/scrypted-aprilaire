@@ -67,6 +67,13 @@ export class OutboundRequestQueue {
     private sequence = 0;
     /** Count of outstanding retry timers (pauses new sends while > 0). */
     private retryPending = 0;
+    /**
+     * When false, enqueue accepts work but drain does not send until the TCP
+     * socket is ready. Prevents write-to-closed-socket races on reconnect.
+     * Defaults true so unit tests and non-TCP hosts send immediately; the
+     * socket layer flips this false on reset and true on connect.
+     */
+    private transportReady = true;
 
     private readonly maxAttempts: number;
     private readonly retryDelayMs: number;
@@ -100,9 +107,24 @@ export class OutboundRequestQueue {
         return this.inFlight.size;
     }
 
+    /** True when the TCP transport may send frames. */
+    get isTransportReady(): boolean {
+        return this.transportReady;
+    }
+
     /** True when new commands are held because a retry is scheduled. */
     get isBlocked(): boolean {
         return this.retryPending > 0;
+    }
+
+    /**
+     * Gate sending on socket connectivity. Enabling drains any queued commands.
+     */
+    setTransportReady(ready: boolean): void {
+        this.transportReady = ready;
+        if (ready) {
+            this.drain();
+        }
     }
 
     /** Test/inspection helper: in-flight entry for a sequence. */
@@ -173,15 +195,18 @@ export class OutboundRequestQueue {
         this.inFlight.clear();
         this.pending = [];
         this.retryPending = 0;
+        this.transportReady = false;
+        // Fresh TCP session → restart HA sequence at 0.
+        this.sequence = 0;
     }
 
     /**
-     * Drain pending commands while not blocked by a scheduled retry.
+     * Drain pending commands while transport is ready and not blocked by a retry.
      * @returns sequence of the last command started this call, or -1
      */
     private drain(): number {
         let lastSeq = -1;
-        while (this.pending.length > 0 && this.retryPending === 0) {
+        while (this.pending.length > 0 && this.retryPending === 0 && this.transportReady) {
             const request = this.pending.shift()!;
             lastSeq = this.sendNew(request);
         }

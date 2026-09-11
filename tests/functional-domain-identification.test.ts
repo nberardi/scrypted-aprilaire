@@ -10,6 +10,7 @@ import {
     MacAddressResponse,
     RevisionAndModelResponse,
     sanitizeIdentificationText,
+    ThermostatNameRequest,
     ThermostatNameResponse,
 } from "../src/FunctionalDomainIdentification";
 import {
@@ -69,6 +70,11 @@ describe("Identification domainx", () => {
                 "6003"
             );
         });
+        it("maps unknown model bytes to a stable Unknown(n) label", () => {
+            expect(new RevisionAndModelResponse(Buffer.from([0x41, 1, 0, 1, 99, 0, 0])).model).toBe(
+                "Unknown(99)"
+            );
+        });
     });
 
     describe(" MAC Address", () => {
@@ -117,6 +123,22 @@ describe("Identification domainx", () => {
             expect(sanitizeIdentificationText("Main Floor\0\0\0")).toBe("Main Floor");
             expect(sanitizeIdentificationText(Buffer.alloc(15, 0))).toBe("");
             expect(sanitizeIdentificationText("  Upstairs  ")).toBe("Upstairs");
+        });
+
+        it("serializes Thermostat Name write (§8.5) with NUL-padded fields", () => {
+            const req = new ThermostatNameRequest();
+            req.postalCode = "12345";
+            req.name = "Living Room";
+            const buf = req.toBuffer();
+            expect(req.attribute).toBe(0x05);
+            expect(buf.length).toBe(24); // 7 + NUL + 15 + NUL
+            expect(buf[7]).toBe(0);
+            expect(buf.subarray(0, 5).toString("ascii")).toBe("12345");
+            expect(buf.subarray(8, 19).toString("ascii")).toBe("Living Room");
+            // Round-trip through the response parser
+            const res = new ThermostatNameResponse(buf);
+            expect(res.postalCode).toBe("12345");
+            expect(res.name).toBe("Living Room");
         });
     });
 });

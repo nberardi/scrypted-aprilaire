@@ -23,6 +23,7 @@ npm run test:watch
 | `functional-domain-alerts.test.ts` | Alerts domain |
 | `functional-domain-setup.test.ts` | Setup domain |
 | `best-practices-bootstrap.test.ts` | Connect checklist |
+| `protocol-coverage-gaps.test.ts` | Documented gaps in implemented domains |
 
 ## Interpreting failures
 

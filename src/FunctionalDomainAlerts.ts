@@ -1,4 +1,4 @@
-import { FunctionalDomain, convertTemperatureToByte, FunctionalDomainScheduling, convertByteToTemperature, FunctionalDomainAlerts } from "./AprilaireClient";
+import { FunctionalDomain, FunctionalDomainAlerts } from "./AprilaireClient";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse } from "./BasePayloadResponse";
 
@@ -9,11 +9,56 @@ import { BasePayloadResponse } from "./BasePayloadResponse";
 *
 * Attribute                                 |   Byte    |   COS |   R/W |   Implimented
 * ------------------------------------------|-----------|-------|-------|---------------
-* Service Reminders Status                  |   0x01    |   Yes |   R/W |   X
-* Alerts Status                             |   0x02    |   Yes |   R   |   X
+* Service Reminders Status                  |   0x01    |   Yes |   R/W |   X (read; write clear)
+* Alerts Status                             |   0x02    |   Yes |   R   |   X (parse)
 * Alerts Settings                           |   0x03    |   Yes |   R/W |   
 *
 */
+
+/**
+ * Write Service Reminders Status (§4.1).
+ * Bytes 0–4: 0 = clear that reminder if active, 1 = leave unchanged.
+ * Bytes 5–9: percent fields are read-oriented; written as 0.
+ */
+export class ServiceRemindersStatusRequest extends BasePayloadRequest {
+    /** 0 = clear, 1 = leave alone */
+    hvac: number = 1;
+    airFilter: number = 1;
+    waterPanel: number = 1;
+    dehumidifier: number = 1;
+    freshAir: number = 1;
+
+    constructor() {
+        super(FunctionalDomain.Alerts, FunctionalDomainAlerts.ServiceRemindersStatus);
+    }
+
+    /** Clear only the named reminder channels (others left alone). */
+    static clear(channels: {
+        hvac?: boolean;
+        airFilter?: boolean;
+        waterPanel?: boolean;
+        dehumidifier?: boolean;
+        freshAir?: boolean;
+    }): ServiceRemindersStatusRequest {
+        const req = new ServiceRemindersStatusRequest();
+        if (channels.hvac) req.hvac = 0;
+        if (channels.airFilter) req.airFilter = 0;
+        if (channels.waterPanel) req.waterPanel = 0;
+        if (channels.dehumidifier) req.dehumidifier = 0;
+        if (channels.freshAir) req.freshAir = 0;
+        return req;
+    }
+
+    toBuffer(): Buffer {
+        const payload = Buffer.alloc(10, 0);
+        payload.writeUint8(this.hvac ? 1 : 0, 0);
+        payload.writeUint8(this.airFilter ? 1 : 0, 1);
+        payload.writeUint8(this.waterPanel ? 1 : 0, 2);
+        payload.writeUint8(this.dehumidifier ? 1 : 0, 3);
+        payload.writeUint8(this.freshAir ? 1 : 0, 4);
+        return payload;
+    }
+}
 
 export class ServiceRemindersStatusResponse extends BasePayloadResponse {
     hvac: boolean;

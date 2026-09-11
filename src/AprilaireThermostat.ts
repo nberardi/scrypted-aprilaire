@@ -513,7 +513,7 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         }
 
         else if (response instanceof HeatBlastResponse) {
-            this._heatBlastState = this._heatBlastState ?? response.heatBlast;
+            this._heatBlastState = response.heatBlast;
             this.storageSettings.values.heatBlast = this._heatBlastState;
         }
 

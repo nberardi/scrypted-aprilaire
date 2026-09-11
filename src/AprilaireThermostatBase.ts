@@ -3,7 +3,7 @@ import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
 import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus, ControllingSensorsStatusAndValueRequest, SensorValuesRequest, SensorValuesResponse } from './FunctionalDomainSensors';
-import { OfflineResponse, ThermostatStatusRequest } from './FunctionalDomainStatus';
+import { OfflineResponse, ThermostatError, ThermostatErrorResponse, ThermostatStatusRequest } from './FunctionalDomainStatus';
 
 export enum AprilaireSystemType {
     Thermostat,
@@ -128,6 +128,14 @@ export class AprilaireThermostatBase extends ScryptedDeviceBase implements Onlin
             // Status/Offline reports protocol availability — reflect it on the
             // Online interface, not OnOff (it is not a power state).
             this.online = response.offline === false;
+        }
+
+        else if (response instanceof ThermostatErrorResponse) {
+            // Sync dumps thermostat errors even without a dedicated COS bit.
+            if (response.thermostatError !== ThermostatError.NoError) {
+                const label = ThermostatError[response.thermostatError] ?? String(response.thermostatError);
+                this.console.error(`thermostat error: ${label}`);
+            }
         }
     }
 }
