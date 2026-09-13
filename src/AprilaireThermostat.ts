@@ -1,7 +1,7 @@
 import { Fan, FanMode, FanState, FanStatus, FilterMaintenance, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Setting, SettingValue, Settings, TemperatureCommand, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
 import { AprilaireSystemType, AprilaireThermostatBase } from './AprilaireThermostatBase';
-import { DehumidificationSetpointResponse, FanModeSetting, HumidificationSetpointResponse, HumidificationState, ThermostatAndIAQAvailableResponse, ThermostatCapabilities, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode, enforceDeadband, DeadbandPreserve } from './FunctionalDomainControl';
+import { DehumidificationSetpointResponse, FanModeSetting, HumidificationSetpointResponse, HumidificationState, ThermostatAndIAQAvailableResponse, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode, enforceDeadband, DeadbandPreserve, availableScryptedModesForCapabilities, protocolModeFromScrypted, supportsAutoChangeover, supportsEmergencyHeat } from './FunctionalDomainControl';
 import {
     DEFAULT_DEADBAND_C,
     deadbandIndexToCelsius,
@@ -20,6 +20,7 @@ import { StorageSettingsDevice, StorageSettings } from '@scrypted/sdk/storage-se
 
 export class AprilaireThermostat extends AprilaireThermostatBase implements OnOff, Settings, StorageSettingsDevice, TemperatureSetting, Thermometer, HumiditySensor, HumiditySetting, FilterMaintenance, Fan {
     private _heatBlastState: boolean;
+    private _emergencyHeatState: boolean;
     private _holdState: string;
     /**
      * Last Setup/1 installer settings (scale, deadband, Away/Heat Blast enables, etc.).
@@ -74,6 +75,13 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
             noStore: true,
             onPut: this.setHeatBlast.bind(this)
         },
+        emergencyHeat: {
+            title: "Emergency Heat",
+            type: "boolean",
+            description: "Use auxiliary/emergency heat (heat pump). Hidden when the thermostat does not list EmHeat in §2.7.",
+            noStore: true,
+            onPut: this.setEmergencyHeat.bind(this)
+        },
         hold: {
             title: "Temperature Hold",
             type: "string",
@@ -116,16 +124,8 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         else
             return;
 
-        var setting = {...this.fan};
-        setting.mode = mode;
-        // Manual = fan forced on; in Auto the ThermostatStatus COS reports actual state.
-        setting.speed = mode === FanMode.Manual ? 1 : 0;
-        setting.active = mode === FanMode.Manual;
-
         let request = new ThermostatSetpointAndModeSettingsRequest();
         request.fan = mode === FanMode.Auto ? FanModeSetting.Auto : FanModeSetting.On;
-
-        this.fan = setting;
         this.client.write(request);
     }
 
@@ -141,6 +141,13 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         for (const setting of s) {
             if (setting.key?.startsWith("heatBlast")) {
                 if (!showHeatBlast)
+                    continue;
+                settings.push(setting);
+                continue;
+            }
+
+            if (setting.key?.startsWith("emergencyHeat")) {
+                if (!supportsEmergencyHeat(this.client.system?.thermostat))
                     continue;
                 settings.push(setting);
                 continue;
@@ -174,6 +181,19 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         request.heatBlast = Boolean(newValue);
         this.client.write(request);
         this._heatBlastState = request.heatBlast;
+    }
+
+    setEmergencyHeat(oldValue: any, newValue: any) {
+        if (newValue === this._emergencyHeatState)
+            return;
+
+        if (!supportsEmergencyHeat(this.client.system?.thermostat))
+            return;
+
+        const request = new ThermostatSetpointAndModeSettingsRequest();
+        request.mode = Boolean(newValue) ? TMode.EmergencyHeat : TMode.Heat;
+        this.client.write(request);
+        this._emergencyHeatState = Boolean(newValue);
     }
 
     setHold(oldValue: any, newValue: any) {
@@ -252,28 +272,7 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         var settings = { ...this.temperatureSetting };
 
         if (mode) {
-            switch (mode) {
-                case ThermostatMode.On:
-                case ThermostatMode.Auto:
-                case ThermostatMode.HeatCool:
-                    request.mode = TMode.Auto;
-                    break;
-
-                case ThermostatMode.Cool:
-                    request.mode = TMode.Cool;
-                    break;
-
-                case ThermostatMode.Heat:
-                    request.mode = TMode.Heat;
-                    break;
-
-                case ThermostatMode.Off:
-                case ThermostatMode.FanOnly:
-                    request.mode = TMode.Off;
-                    break;
-            }
-
-            settings.mode = mode;
+            request.mode = protocolModeFromScrypted(mode, this.client.system?.thermostat);
         }
 
         if (setpoint) {
@@ -294,31 +293,14 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
                 request.coolSetpoint = Math.max(setpoint[0], setpoint[1]);
                 request.heatSetpoint = Math.min(setpoint[0], setpoint[1]);
             }
-
-            settings.setpoint = setpoint;
         }
 
         // In Auto, dual heat+cool writes that violate deadband NACK or surprise-adjust
         // on the thermostat (§J.6 / §2.1). Pre-enforce so the wire values stay valid.
-        this.applyDeadbandToRequest(request, settings.mode);
+        this.applyDeadbandToRequest(request, mode ?? settings.mode);
 
-        // Reflect any deadband adjustment back into Scrypted state.
-        if (request.heatSetpoint && request.coolSetpoint) {
-            const effectiveMode = mode ?? settings.mode;
-            if (
-                effectiveMode === ThermostatMode.Auto ||
-                effectiveMode === ThermostatMode.HeatCool ||
-                effectiveMode === ThermostatMode.On
-            ) {
-                settings.setpoint = [
-                    Math.min(request.heatSetpoint, request.coolSetpoint),
-                    Math.max(request.heatSetpoint, request.coolSetpoint),
-                ];
-            }
-        }
-
-        this.temperatureSetting = settings;
-
+        // Device state follows COS/ReadResponse — do not publish the command as
+        // current until the thermostat confirms (writes can be dropped on disconnect).
         this.client.write(request);
     }
 
@@ -334,10 +316,13 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         effectiveMode: ThermostatMode | undefined
     ): void {
         const isAuto =
-            effectiveMode === ThermostatMode.Auto ||
-            effectiveMode === ThermostatMode.HeatCool ||
-            effectiveMode === ThermostatMode.On ||
-            request.mode === TMode.Auto;
+            supportsAutoChangeover(this.client.system?.thermostat)
+            && (
+                effectiveMode === ThermostatMode.Auto ||
+                effectiveMode === ThermostatMode.HeatCool ||
+                effectiveMode === ThermostatMode.On ||
+                request.mode === TMode.Auto
+            );
 
         if (!isAuto) {
             return;
@@ -416,34 +401,8 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
     }
 
     async setThermostatMode(mode: ThermostatMode): Promise<void> {
-        let request = new ThermostatSetpointAndModeSettingsRequest();
-
-        var settings = { ...this.temperatureSetting };
-
-        switch (mode) {
-            case ThermostatMode.On:
-            case ThermostatMode.Auto:
-            case ThermostatMode.HeatCool:
-                request.mode = TMode.Auto;
-                break;
-
-            case ThermostatMode.Cool:
-                request.mode = TMode.Cool;
-                break;
-
-            case ThermostatMode.Heat:
-                request.mode = TMode.Heat;
-                break;
-
-            case ThermostatMode.Off:
-            case ThermostatMode.FanOnly:
-                request.mode = TMode.Off;
-                break;
-        }
-
-        settings.mode = mode;
-        this.temperatureSetting = settings;
-
+        const request = new ThermostatSetpointAndModeSettingsRequest();
+        request.mode = protocolModeFromScrypted(mode, this.client.system?.thermostat);
         this.client.write(request);
     }
 
@@ -496,9 +455,15 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         }
 
         else if (response instanceof HumidificationSetpointResponse) {
-            humiditySetting.humidifierSetpoint = response.humidificationSetpoint;
-            humiditySetting.mode = response.on ? HumidityMode.Humidify : humiditySetting.mode;
-            humiditySetting.activeMode = response.on ? HumidityMode.Humidify : humiditySetting.activeMode;
+            if (response.window === "manual" && response.humidificationSetpoint !== undefined)
+                humiditySetting.humidifierSetpoint = response.humidificationSetpoint;
+            if (response.window === "auto")
+                humiditySetting.mode = response.on ? HumidityMode.Auto : HumidityMode.Off;
+            else if (response.on)
+                humiditySetting.mode = HumidityMode.Humidify;
+            humiditySetting.activeMode = response.on
+                ? (response.window === "auto" ? HumidityMode.Auto : HumidityMode.Humidify)
+                : humiditySetting.activeMode;
         }
 
         else if (response instanceof ThermostatInstallerSettingsResponse) {
@@ -514,8 +479,8 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         }
 
         else if (response instanceof HeatBlastResponse) {
-            this._heatBlastState = this._heatBlastState ?? response.heatBlast;
-            this.storageSettings.values.heatBlast = this._heatBlastState;
+            this._heatBlastState = response.heatBlast;
+            this.storageSettings.values.heatBlast = response.heatBlast;
         }
 
         else if (response instanceof ScheduleHoldResponse) {
@@ -549,32 +514,16 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         }
 
         else if (response instanceof ThermostatAndIAQAvailableResponse) {
-            switch (response.thermostat) {
-                case ThermostatCapabilities.Cool:
-                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Cool];
-                    break;
-                case ThermostatCapabilities.Heat:
-                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat];
-                    break;
-                case ThermostatCapabilities.HeatAndCool:
-                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
-                    break;
-                case ThermostatCapabilities.HeatCoolAndAuto:
-                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
-                    break;
-                case ThermostatCapabilities.HeatEmergencyHeatAndCool:
-                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool];
-                    break;
-                case ThermostatCapabilities.HeatEmergencyHeatCoolAndAuto:
-                    tempSettings.availableModes = [ThermostatMode.FanOnly, ThermostatMode.Heat, ThermostatMode.Cool, ThermostatMode.HeatCool, ThermostatMode.Auto];
-                    break;
-            }
+            tempSettings.availableModes = availableScryptedModesForCapabilities(response.thermostat) as ThermostatMode[];
 
+            const humidityModes: HumidityMode[] = [HumidityMode.Off];
             if (response.dehumidification)
-                humiditySetting.availableModes.push(HumidityMode.Dehumidify);
-
-            if (response.humidification !== HumidificationState.NotAvailable)
-                humiditySetting.availableModes.push(HumidityMode.Humidify);
+                humidityModes.push(HumidityMode.Dehumidify);
+            if (response.humidification === HumidificationState.Auto)
+                humidityModes.push(HumidityMode.Auto);
+            else if (response.humidification === HumidificationState.Manual)
+                humidityModes.push(HumidityMode.Humidify);
+            humiditySetting.availableModes = humidityModes;
 
             this.console.info("thermostat modes: " + tempSettings.availableModes);
         }
@@ -583,15 +532,26 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
             switch (response.mode) {
                 case TMode.Auto:
                     this.on = true;
+                    this._emergencyHeatState = false;
+                    this.storageSettings.values.emergencyHeat = false;
                     tempSettings.mode = ThermostatMode.Auto;
                     break;
                 case TMode.Cool:
                     this.on = true;
+                    this._emergencyHeatState = false;
+                    this.storageSettings.values.emergencyHeat = false;
                     tempSettings.mode = ThermostatMode.Cool;
                     break;
                 case TMode.Heat:
+                    this.on = true;
+                    this._emergencyHeatState = false;
+                    this.storageSettings.values.emergencyHeat = false;
+                    tempSettings.mode = ThermostatMode.Heat;
+                    break;
                 case TMode.EmergencyHeat:
                     this.on = true;
+                    this._emergencyHeatState = true;
+                    this.storageSettings.values.emergencyHeat = true;
                     tempSettings.mode = ThermostatMode.Heat;
                     break;
                 case TMode.Off:
@@ -601,6 +561,8 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
                     // `on` carries the power state, and FanOnly keeps the fan
                     // controls usable while heating/cooling is off.
                     this.on = false;
+                    this._emergencyHeatState = false;
+                    this.storageSettings.values.emergencyHeat = false;
                     tempSettings.mode = ThermostatMode.FanOnly;
                     break;
             }

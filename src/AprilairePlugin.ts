@@ -11,9 +11,10 @@ import {
     SensorValuesResponse,
     TemperatureSensorStatus,
     WrittenOutdoorTemperatureValueRequest,
+    clampWrittenOdtIntervalMinutes,
 } from './FunctionalDomainSensors';
 import { ThermostatInstallerSettingsRequest, ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
-import { HeatBlastResponse, HoldType, ScheduleHoldRequest, ScheduleHoldResponse } from './FunctionalDomainScheduling';
+import { HoldType, ScheduleHoldRequest, ScheduleHoldResponse, scheduleHoldFingerprint } from './FunctionalDomainScheduling';
 import { SyncRequest } from './FunctionalDomainStatus';
 import { setInterval } from 'node:timers';
 import { AprilaireOutdoorThermometer } from './AprilaireOutdoorThermometer';
@@ -21,27 +22,24 @@ import { AprilaireAuxThermometer } from './AprilaireAuxThermometer';
 import { AprilaireThermostat } from './AprilaireThermostat';
 import { AprilaireDehumidifier } from './AprilaireDehumidifier';
 import { AprilaireHumidifier } from './AprilaireHumidifier';
+import { HoldSyncEchoGuard } from './HoldSyncEchoGuard';
+import {
+    AuxNativeSuffix,
+    DISPLAY_OUTDOOR,
+    DISPLAY_REMOTE,
+    DISPLAY_RETURN_AIR,
+    DISPLAY_SUPPLY_AIR,
+    NATIVE_DEHUMIDIFIER,
+    NATIVE_HUMIDIFIER,
+    NATIVE_LAT,
+    NATIVE_OUTDOOR,
+    NATIVE_RAT,
+    NATIVE_REMOTE,
+    isAuxTemperatureNativeId,
+    thermostatMacFromNativeId,
+} from './nativeIds';
 
-const { deviceManager, systemManager } = sdk;
-
-/** Stable nativeId suffixes (internal; do not rename — would orphan devices). */
-const NATIVE_OUTDOOR = "|OutdoorTemperatureSensor";
-const NATIVE_RAT = "|RAT";
-const NATIVE_LAT = "|LAT";
-/** Wired remote indoor probe (Sensor Values offsets 2–3) — often installed as return-air. */
-const NATIVE_REMOTE = "|RemoteTemperature";
-
-/** User-facing name suffixes appended to the thermostat name. */
-const DISPLAY_OUTDOOR = " Outdoor Temperature";
-const DISPLAY_RETURN_AIR = " Return Air Temperature";
-/** LAT in the guide — supply air leaving the equipment (clearer for homeowners). */
-const DISPLAY_SUPPLY_AIR = " Supply Air Temperature";
-const DISPLAY_REMOTE = " Remote Temperature";
-
-type AuxNativeSuffix =
-    | typeof NATIVE_RAT
-    | typeof NATIVE_LAT
-    | typeof NATIVE_REMOTE;
+const { deviceManager } = sdk;
 
 function isTemperatureSensorOk(status: TemperatureSensorStatus): boolean {
     return status === TemperatureSensorStatus.NoError;
@@ -70,14 +68,15 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         syncOutdoorSensor: {
             title: "Sync Outdoor Sensors",
             type: "boolean",
-            description: "If one of your thermostats has an outdoor sensor, allow the value to be synced to your other thermostats that don't have outdoor sensors installed."
+            description: "If one of your thermostats has an outdoor sensor, allow the value to be synced to your other thermostats that don't have outdoor sensors installed.",
+            onPut: () => this.restartOdtSyncTimer()
         },
         syncOutdoorSensorInterval: {
             title: "Sync Outdoor Sensor Interval",
             type: "number",
             defaultValue: 1,
-            description: "The number of minutes between how often to sync the outdoor sensor value to thermostats that don't have an outdoor sensor installed.",
-            onPut: this.setupOutdoorsSensorsInterval.bind(this)
+            description: "Minutes between Written Outdoor Temperature refreshes (§5.4: must be less than 10; values are clamped to 1–9).",
+            onPut: () => this.restartOdtSyncTimer()
         },
         syncAwayHold: {
             title: "Sync Away Hold",
@@ -122,11 +121,13 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     sensorValuesTimer: NodeJS.Timeout;
     /** nativeIds we already tried to purge as stale ghosts (avoid remove spam each poll). */
     private sensorCleanupAttempted = new Set<string>();
+    /** Holds we wrote for multi-stat sync — ignore matching COS so we do not echo. */
+    private holdSyncEchoes = new HoldSyncEchoGuard();
 
     constructor(nativeId?: string) {
         super(nativeId);
 
-        this.setupOutdoorsSensorsInterval(0, this.storageSettings.values.syncOutdoorSensorInterval);
+        this.restartOdtSyncTimer();
         // Sensor Values is not COS-capable — poll every minute regardless of outdoor sync.
         this.sensorValuesTimer = setInterval(() => this.pollSensorValues(), 60 * 1000);
         this.sensorValuesTimer.unref?.();
@@ -175,14 +176,45 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         this.console.info(`[${mac}] released client and stopped reconnect supervision`);
     }
 
-    private setupOutdoorsSensorsInterval(oldValue: any, newValue: any) {
-        if (newValue === 0) {
-            clearInterval(this.automatedOutdoorSensorsTimer);
-            return;
-        }
-
+    private restartOdtSyncTimer() {
         clearInterval(this.automatedOutdoorSensorsTimer);
-        this.automatedOutdoorSensorsTimer = setInterval(this.refreshOutdoorSensors.bind(this), newValue * 60 * 1000);
+        const syncEnabled = this.storageSettings.values.syncOutdoorSensor !== false;
+        const minutes = clampWrittenOdtIntervalMinutes(
+            Number(this.storageSettings.values.syncOutdoorSensorInterval),
+            syncEnabled
+        );
+        if (minutes === undefined)
+            return;
+
+        this.automatedOutdoorSensorsTimer = setInterval(
+            this.refreshOutdoorSensors.bind(this),
+            minutes * 60 * 1000
+        );
+        this.automatedOutdoorSensorsTimer.unref?.();
+    }
+
+    private persistConnection(nativeId: string, host: string, port: number): void {
+        const storage = deviceManager.getDeviceStorage(nativeId);
+        if (!storage)
+            return;
+        storage.setItem("host", host);
+        storage.setItem("port", port.toString());
+    }
+
+    /** Look up host/port from this nativeId or its thermostat MAC root. */
+    private connectionSettingsFor(nativeId: string): { host: string; port: number } | undefined {
+        const tryStorage = (id: string): { host: string; port: number } | undefined => {
+            const s = deviceManager.getDeviceStorage(id);
+            if (!s)
+                return undefined;
+            const host = s.getItem("host");
+            const port = Number(s.getItem("port"));
+            if (!host || isNaN(port))
+                return undefined;
+            return { host, port };
+        };
+
+        return tryStorage(nativeId) ?? tryStorage(thermostatMacFromNativeId(nativeId));
     }
 
     /** Full §5.1 array for every connected thermostat (return/supply/remote/wireless). */
@@ -216,23 +248,33 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         }
 
         else if (response instanceof ScheduleHoldResponse) {
-            if ((response.hold === HoldType.Vacation && this.storageSettings.values.syncVacationHold) || (response.hold === HoldType.Away && this.storageSettings.values.syncAwayHold)) {
-                let request = new ScheduleHoldRequest();
-                request.hold = response.hold;
-                request.fan = response.fan;
-                request.heatSetpoint = response.heatSetpoint;
-                request.coolSetpoint = response.coolSetpoint;
-                request.dehumidifierSetpoint = response.dehumidifierSetpoint;
-                request.endDate = response.endDate;
-                
-                // write teh hold to the other thermostats
-                this.clients.forEach((client) => {
-                    if (client.mac === responseClient.mac)
-                        return;
+            const syncAway = this.storageSettings.values.syncAwayHold;
+            const syncVacation = this.storageSettings.values.syncVacationHold;
+            const shouldSync =
+                (response.hold === HoldType.Vacation && syncVacation)
+                || (response.hold === HoldType.Away && syncAway);
+            if (!shouldSync)
+                return;
 
-                    client.write(request);
-                });
-            }
+            const fingerprint = scheduleHoldFingerprint(response);
+            if (this.holdSyncEchoes.isEcho(responseClient.mac, fingerprint))
+                return;
+
+            const request = new ScheduleHoldRequest();
+            request.hold = response.hold;
+            request.fan = response.fan;
+            request.heatSetpoint = response.heatSetpoint;
+            request.coolSetpoint = response.coolSetpoint;
+            request.dehumidifierSetpoint = response.dehumidifierSetpoint;
+            request.endDate = response.endDate;
+
+            this.clients.forEach((client) => {
+                if (client.mac === responseClient.mac)
+                    return;
+
+                this.holdSyncEchoes.noteWrite(client.mac, fingerprint);
+                client.write(request);
+            });
         }
 
         else if (response instanceof ControllingSensorsStatusAndValueResponse) {
@@ -440,6 +482,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 }
             };
             await deviceManager.onDeviceDiscovered(d);
+            this.persistConnection(nativeId, responseClient.host, responseClient.port);
             this.console.info(`[${mac}] discovered Outdoor Temperature (physical install)`);
         }
 
@@ -519,6 +562,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 },
             };
             await deviceManager.onDeviceDiscovered(d);
+            this.persistConnection(nativeId, responseClient.host, responseClient.port);
             this.console.info(`[${responseClient.mac}] discovered aux sensor ${nativeId} (${nameSuffix.trim()})`);
         }
 
@@ -549,46 +593,46 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     }
 
     async getDevice(nativeId: string): Promise<any> {
+        await this.ensureConnectedForNativeId(nativeId);
+
         if (this.thermostats.has(nativeId))
             return this.thermostats.get(nativeId);
 
         if (nativeId.endsWith(NATIVE_OUTDOOR)) {
-            const mac = nativeId.replace(NATIVE_OUTDOOR, "");
+            const mac = thermostatMacFromNativeId(nativeId);
             if (!this.outdoorSensors.has(mac))
                 this.outdoorSensors.set(mac, new AprilaireOutdoorThermometer(nativeId));
             return this.outdoorSensors.get(mac);
         }
 
-        if (
-            nativeId.endsWith(NATIVE_RAT) ||
-            nativeId.endsWith(NATIVE_LAT) ||
-            nativeId.endsWith(NATIVE_REMOTE)
-        ) {
+        if (isAuxTemperatureNativeId(nativeId)) {
             if (!this.auxSensors.has(nativeId))
                 this.auxSensors.set(nativeId, new AprilaireAuxThermometer(nativeId));
             return this.auxSensors.get(nativeId);
         }
 
-        let s = deviceManager.getDeviceStorage(nativeId);
-        if (s) {
-            const host = s.getItem("host");
-            const port = Number(s.getItem("port"));
-
-            // Scrypted resolves each child device separately at startup; a
-            // failure here must not reject every sibling lookup, and the shared
-            // discovery promise keeps all of them on one TCP session.
-            try {
-                await this.connectThermostat(host, port);
-            } catch (e) {
-                this.console.warn(`[${nativeId}] connect failed: ${e}`);
-                return undefined;
-            }
-
-            if (this.thermostats.has(nativeId))
-                return this.thermostats.get(nativeId);
-        }
-
         return undefined;
+    }
+
+    /**
+     * Scrypted calls getDevice independently for each child. Host/port are stored
+     * on the MAC root (and copied onto IAQ children); look up either so a
+     * humidifier/dehumidifier/aux lookup still opens the one TCP session.
+     */
+    private async ensureConnectedForNativeId(nativeId: string): Promise<void> {
+        const mac = thermostatMacFromNativeId(nativeId);
+        if (mac && this.clients.has(mac))
+            return;
+
+        const connection = this.connectionSettingsFor(nativeId);
+        if (!connection)
+            return;
+
+        try {
+            await this.connectThermostat(connection.host, connection.port);
+        } catch (e) {
+            this.console.warn(`[${nativeId}] connect failed: ${e}`);
+        }
     }
 
     /**
@@ -667,7 +711,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             await rename(mac, base, ScryptedDeviceType.Thermostat, ifaces, thermo);
         }
 
-        const humId = mac + "-humidifier";
+        const humId = mac + NATIVE_HUMIDIFIER;
         const hum = this.thermostats.get(humId);
         if (hum) {
             await rename(humId, base + " Humidifier", ScryptedDeviceType.Fan, [
@@ -681,7 +725,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             ], hum);
         }
 
-        const dehumId = mac + "-dehumidifier";
+        const dehumId = mac + NATIVE_DEHUMIDIFIER;
         const dehum = this.thermostats.get(dehumId);
         if (dehum) {
             await rename(dehumId, base + " Dehumidifier", ScryptedDeviceType.Fan, [
@@ -873,7 +917,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 ScryptedInterface.FilterMaintenance,
                 ScryptedInterface.Fan
             ];
-            dh.nativeId = client.mac + "-humidifier";
+            dh.nativeId = client.mac + NATIVE_HUMIDIFIER;
             dh.name = client.name + " Humidifier";
             dh.type = ScryptedDeviceType.Fan;
 
@@ -882,6 +926,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
 
             hum = new AprilaireHumidifier(dh.nativeId, client);
             self.thermostats.set(dh.nativeId, hum);
+            self.persistConnection(dh.nativeId, host, port);
         }
 
         if (client.system.dehumidification) {
@@ -895,7 +940,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 ScryptedInterface.FilterMaintenance,
                 ScryptedInterface.Fan
             ];
-            dh.nativeId = client.mac + "-dehumidifier";
+            dh.nativeId = client.mac + NATIVE_DEHUMIDIFIER;
             dh.name = client.name + " Dehumidifier";
             dh.type = ScryptedDeviceType.Fan;
 
@@ -904,11 +949,10 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
 
             deHum = new AprilaireDehumidifier(dh.nativeId, client);
             self.thermostats.set(dh.nativeId, deHum);
+            self.persistConnection(dh.nativeId, host, port);
         }
 
-        const s = deviceManager.getDeviceStorage(d.nativeId);
-        s.setItem("host", host);
-        s.setItem("port", port.toString());
+        self.persistConnection(d.nativeId, host, port);
 
         // Force UI name immediately (existing devices keep their first name otherwise).
         await self.applyClientDisplayName(client);

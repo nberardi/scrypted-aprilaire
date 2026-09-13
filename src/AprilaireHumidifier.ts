@@ -7,6 +7,9 @@ import { BasePayloadResponse } from './BasePayloadResponse';
 import { ServiceRemindersStatusResponse } from './FunctionalDomainAlerts';
 
 export class AprilaireHumidifier extends AprilaireThermostatBase implements OnOff, Fan, HumiditySetting, HumiditySensor, FilterMaintenance {
+    /** Last Auto window index (1–7). Not a %RH value. */
+    private _autoLevel?: number;
+
     constructor(nativeId: string, client: AprilaireClient) {
         super(nativeId, client, AprilaireSystemType.Humidifier);
     }
@@ -26,33 +29,32 @@ export class AprilaireHumidifier extends AprilaireThermostatBase implements OnOf
     private buildSetpointRequest(): HumidificationSetpointRequest {
         const request = new HumidificationSetpointRequest();
         request.auto = this.client.system?.humidification === HumidificationState.Auto;
+        request.autoLevel = this._autoLevel;
         return request;
     }
 
     async turnOff(): Promise<void> {
-        this.on = false;
-        this.fan = { speed: 0 };
-
-        let hrequest = this.buildSetpointRequest();
+        // On/fan follow COS — do not publish Off until the thermostat confirms.
+        const hrequest = this.buildSetpointRequest();
         hrequest.on = false;
         this.client.write(hrequest);
     }
 
     async turnOn(): Promise<void> {
-        this.on = true;
-        this.fan = { speed: 1 };
-
-        let hrequest = this.buildSetpointRequest();
+        const hrequest = this.buildSetpointRequest();
         hrequest.on = true;
         hrequest.humidificationSetpoint = this.humiditySetting?.humidifierSetpoint ?? 0;
+        hrequest.autoLevel = this._autoLevel;
         this.client.write(hrequest);
     }
 
     async setHumidity(humidity: HumidityCommand): Promise<void> {
-        let hrequest = this.buildSetpointRequest();
+        const hrequest = this.buildSetpointRequest();
 
-        hrequest.humidificationSetpoint =
-            humidity.humidifierSetpoint ?? this.humiditySetting?.humidifierSetpoint ?? 0;
+        if (humidity.humidifierSetpoint !== undefined)
+            hrequest.humidificationSetpoint = humidity.humidifierSetpoint;
+        else
+            hrequest.humidificationSetpoint = this.humiditySetting?.humidifierSetpoint ?? 0;
 
         if (humidity.mode) {
             switch (humidity.mode) {
@@ -69,7 +71,8 @@ export class AprilaireHumidifier extends AprilaireThermostatBase implements OnOf
             // Setpoint-only change: keep the current on/off state. The wire
             // encodes off as setpoint 0, so leaving `on` unset would turn the
             // unit off when the user only moves the humidity slider.
-            hrequest.on = this.humiditySetting?.mode === HumidityMode.Humidify;
+            hrequest.on = this.humiditySetting?.mode === HumidityMode.Humidify
+                || this.humiditySetting?.mode === HumidityMode.Auto;
         }
 
         this.client.write(hrequest);
@@ -79,7 +82,7 @@ export class AprilaireHumidifier extends AprilaireThermostatBase implements OnOf
         if (!this.isUsableResponse(response))
             return;
 
-        let humiditySetting: HumiditySettingStatus = JSON.parse(JSON.stringify(this.humiditySetting));
+        const humiditySetting: HumiditySettingStatus = JSON.parse(JSON.stringify(this.humiditySetting));
 
         if (response instanceof ServiceRemindersStatusResponse) {
             this.filterChangeIndication = response.waterPanel;
@@ -97,24 +100,34 @@ export class AprilaireHumidifier extends AprilaireThermostatBase implements OnOf
                     break;
 
                 default:
-                    humiditySetting.activeMode = HumidityMode.Humidify;
+                    humiditySetting.activeMode = this.client.system?.humidification === HumidificationState.Auto
+                        ? HumidityMode.Auto
+                        : HumidityMode.Humidify;
                     break;
             }
         }
 
         else if (response instanceof HumidificationSetpointResponse) {
-            humiditySetting.humidifierSetpoint = response.humidificationSetpoint;
-
-            if (response.on)
+            if (response.window === "auto") {
+                this._autoLevel = response.autoLevel;
+                humiditySetting.mode = HumidityMode.Auto;
+                // 1–7 is an index, not %RH — do not publish it as humidifierSetpoint.
+            } else if (response.window === "manual") {
+                humiditySetting.humidifierSetpoint = response.humidificationSetpoint;
                 humiditySetting.mode = HumidityMode.Humidify;
-
-            else
+            } else {
                 humiditySetting.mode = HumidityMode.Off;
+            }
+
+            this.on = response.on;
+            this.fan = { speed: response.on ? 1 : 0 };
         }
 
         else if (response instanceof ThermostatAndIAQAvailableResponse) {
-            let modes: HumidityMode[] = [HumidityMode.Off];
-            if (response.humidification)
+            const modes: HumidityMode[] = [HumidityMode.Off];
+            if (response.humidification === HumidificationState.Auto)
+                modes.push(HumidityMode.Auto);
+            else if (response.humidification === HumidificationState.Manual)
                 modes.push(HumidityMode.Humidify);
 
             humiditySetting.availableModes = modes;

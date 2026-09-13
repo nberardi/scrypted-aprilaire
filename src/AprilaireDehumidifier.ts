@@ -21,13 +21,13 @@ export class AprilaireDehumidifier extends AprilaireThermostatBase implements On
     }
 
     async turnOff(): Promise<void> {
-        let hrequest = new DehumidificationSetpointRequest();
+        const hrequest = new DehumidificationSetpointRequest();
         hrequest.on = false;
         this.client.write(hrequest);
     }
 
     async turnOn(): Promise<void> {
-        let hrequest = new DehumidificationSetpointRequest();
+        const hrequest = new DehumidificationSetpointRequest();
         hrequest.on = true;
         hrequest.dehumidificationSetpoint = this.humiditySetting?.dehumidifierSetpoint ?? 0;
         this.client.write(hrequest);
@@ -95,6 +95,9 @@ export class AprilaireDehumidifier extends AprilaireThermostatBase implements On
 
             else
                 humiditySetting.mode = HumidityMode.Off;
+
+            this.on = response.on;
+            this.fan = { speed: response.on ? 1 : 0 };
         }
 
         else if (response instanceof ThermostatAndIAQAvailableResponse) {

@@ -179,6 +179,38 @@ export function holdTypeToUiValue(type: HoldType): HoldUiValue {
 }
 
 /**
+ * Stable identity of a Schedule Hold for multi-stat sync echo suppression.
+ * Uses local calendar fields (not Date#getTime) so COS round-trips match writes.
+ */
+export function scheduleHoldFingerprint(hold: {
+    hold: HoldType;
+    fan?: FanModeSetting;
+    heatSetpoint?: number;
+    coolSetpoint?: number;
+    dehumidifierSetpoint?: number;
+    endDate?: Date;
+}): string {
+    const end = hold.endDate;
+    const endKey = end
+        ? [
+            end.getFullYear(),
+            end.getMonth() + 1,
+            end.getDate(),
+            end.getHours(),
+            end.getMinutes(),
+        ].join("-")
+        : "";
+    return [
+        hold.hold,
+        hold.fan ?? "",
+        hold.heatSetpoint ?? "",
+        hold.coolSetpoint ?? "",
+        hold.dehumidifierSetpoint ?? "",
+        endKey,
+    ].join("|");
+}
+
+/**
  * Pure builder: UI hold choice (+ optional context) → ScheduleHoldRequest.
  *
  * Wire rules (Guide §3.4):
@@ -246,7 +278,7 @@ export class HeatBlastResponse extends BasePayloadResponse {
         if (!this.hasRequiredLength(1))
             return;
 
-        this.heatBlast = Boolean(payload.readUint8(0));
+        this.heatBlast = payload.readUint8(0) === 1;
     }
 }
 

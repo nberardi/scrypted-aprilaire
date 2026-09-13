@@ -77,7 +77,9 @@ tools/aprilaire-proxy/               # Standalone TCP proxy for thermostat debug
 
 ## Protocol documentation
 
-Authoritative protocol documentation lives on the **[GitHub Wiki](https://github.com/nberardi/scrypted-aprilaire/wiki)**. Do **not** commit manufacturer manuals (`.docx`/`.pdf`) — they are gitignored.
+Authoritative protocol documentation lives on the **[GitHub Wiki](https://github.com/nberardi/scrypted-aprilaire/wiki)**. Clone `https://github.com/nberardi/scrypted-aprilaire.wiki.git` if the HTML wiki is unavailable.
+
+**Read the wiki before changing protocol or device-to-wire mapping.** [AGENTS.md](AGENTS.md) lists which pages to read and what is *not* the spec (`tests/helpers/guide-reference.ts`, Codebase Mapping, and Implementation Backlog can lag). Do **not** commit manufacturer manuals (`.docx`/`.pdf`) — they are gitignored.
 
 ## Architecture
 
@@ -153,6 +155,7 @@ Two workflows in `.github/workflows/`, both on Node 22:
 
 ## Important Notes for AI Assistants
 
+- Follow [AGENTS.md](AGENTS.md): the wiki is the protocol spec. Read the relevant wiki pages in full before editing `AprilaireClient.ts` or `FunctionalDomain*.ts`. Do not “correct” the wiki from production code or from `guide-reference.ts`.
 - This plugin communicates with **real hardware** over TCP. Changes to the protocol layer (`AprilaireClient.ts`, `FunctionalDomain*.ts`) must preserve exact byte-level compatibility.
 - The CRC lookup table in `AprilaireClient.ts` must not be modified.
 - Temperature values in the protocol are always in Celsius. Conversion to/from display units happens at the Scrypted interface boundary.

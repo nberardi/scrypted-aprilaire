@@ -9,8 +9,10 @@ import {
     DEHUMIDIFICATION_SETPOINT_MIN,
     DehumidificationSetpointRequest,
     DehumidificationSetpointResponse,
+    encodeHumidificationSetpointByte,
     FanModeSetting,
     FreshAirSettingsResponse,
+    HUMIDIFICATION_AUTO_SETPOINT_FALLBACK,
     HUMIDIFICATION_AUTO_SETPOINT_MAX,
     HUMIDIFICATION_AUTO_SETPOINT_MIN,
     HUMIDIFICATION_SETPOINT_FALLBACK,
@@ -24,7 +26,12 @@ import {
     ThermostatMode,
     ThermostatSetpointAndModeSettingsRequest,
     ThermostatSetpointAndModeSettingsResponse,
+    availableScryptedModesForCapabilities,
     enforceDeadband,
+    protocolModeFromScrypted,
+    ScryptedThermostatMode,
+    supportsAutoChangeover,
+    supportsEmergencyHeat,
 } from "../src/FunctionalDomainControl";
 import { ResponseErrorType } from "../src/BasePayloadResponse";
 import {
@@ -146,7 +153,42 @@ describe("Control domainx", () => {
         it("parses response", () => {
             const res = new HumidificationSetpointResponse(Buffer.from([40]));
             expect(res.on).toBe(true);
+            expect(res.window).toBe("manual");
             expect(res.humidificationSetpoint).toBe(40);
+            expect(res.autoLevel).toBeUndefined();
+        });
+
+        it("treats 1–7 as Auto index, not %RH", () => {
+            const res = new HumidificationSetpointResponse(Buffer.from([5]));
+            expect(res.on).toBe(true);
+            expect(res.window).toBe("auto");
+            expect(res.autoLevel).toBe(5);
+            expect(res.humidificationSetpoint).toBeUndefined();
+        });
+
+        it("does not publish reserved bytes as a setpoint", () => {
+            for (const byte of [8, 9, 51, 255]) {
+                const res = new HumidificationSetpointResponse(Buffer.from([byte]));
+                expect(res.window).toBe("reserved");
+                expect(res.on).toBe(false);
+                expect(res.humidificationSetpoint).toBeUndefined();
+                expect(res.autoLevel).toBeUndefined();
+            }
+        });
+
+        it("prefers an Auto index over a HomeKit %RH stuffed in humidificationSetpoint", () => {
+            const req = new HumidificationSetpointRequest();
+            req.on = true;
+            req.auto = true;
+            req.autoLevel = 3;
+            req.humidificationSetpoint = 35;
+            expect(req.toBuffer()[0]).toBe(3);
+            expect(encodeHumidificationSetpointByte({
+                on: true,
+                auto: true,
+                autoLevel: 6,
+                percentRh: 40,
+            })).toBe(6);
         });
     });
 
@@ -414,8 +456,11 @@ describe("Control domainx", () => {
 
             it("uses the 1–7 Auto window when the thermostat reports Auto", () => {
                 expect(encode(true, 4, true)).toBe(4);
-                expect(encode(true, 35, true)).toBe(HUMIDIFICATION_AUTO_SETPOINT_MAX);
-                expect(encode(true, undefined, true)).toBe(HUMIDIFICATION_AUTO_SETPOINT_MAX);
+                // %RH must not be clamped into 1–7 (that wrote max Auto for 35%).
+                expect(encode(true, 35, true)).toBe(HUMIDIFICATION_AUTO_SETPOINT_FALLBACK);
+                expect(encode(true, 35, true)).not.toBe(35);
+                expect(encode(true, 35, true)).not.toBe(HUMIDIFICATION_AUTO_SETPOINT_MAX);
+                expect(encode(true, undefined, true)).toBe(HUMIDIFICATION_AUTO_SETPOINT_FALLBACK);
                 expect(encode(true, 0, true)).toBeGreaterThanOrEqual(HUMIDIFICATION_AUTO_SETPOINT_MIN);
             });
 
@@ -426,6 +471,71 @@ describe("Control domainx", () => {
                     }
                 }
             });
+        });
+    });
+
+    describe("§2.7 capability → Scrypted mode mapping", () => {
+        it("offers HeatCool/Auto only when the thermostat lists Auto changeover", () => {
+            for (const caps of [
+                ThermostatCapabilities.HeatAndCool,
+                ThermostatCapabilities.HeatEmergencyHeatAndCool,
+            ]) {
+                const modes = availableScryptedModesForCapabilities(caps);
+                expect(modes).not.toContain(ScryptedThermostatMode.HeatCool);
+                expect(modes).not.toContain(ScryptedThermostatMode.Auto);
+                expect(supportsAutoChangeover(caps)).toBe(false);
+            }
+
+            for (const caps of [
+                ThermostatCapabilities.HeatCoolAndAuto,
+                ThermostatCapabilities.HeatEmergencyHeatCoolAndAuto,
+            ]) {
+                const modes = availableScryptedModesForCapabilities(caps);
+                expect(modes).toContain(ScryptedThermostatMode.HeatCool);
+                expect(modes).toContain(ScryptedThermostatMode.Auto);
+                expect(supportsAutoChangeover(caps)).toBe(true);
+            }
+        });
+
+        it("writes protocol Auto (5) for HeatCool/Auto only when Auto is supported", () => {
+            expect(protocolModeFromScrypted(
+                ScryptedThermostatMode.HeatCool,
+                ThermostatCapabilities.HeatCoolAndAuto
+            )).toBe(ThermostatMode.Auto);
+            expect(protocolModeFromScrypted(
+                ScryptedThermostatMode.Auto,
+                ThermostatCapabilities.HeatEmergencyHeatCoolAndAuto
+            )).toBe(ThermostatMode.Auto);
+            expect(protocolModeFromScrypted(
+                ScryptedThermostatMode.HeatCool,
+                ThermostatCapabilities.HeatAndCool
+            )).toBe(ThermostatMode.Null);
+            expect(protocolModeFromScrypted(
+                ScryptedThermostatMode.Auto,
+                ThermostatCapabilities.HeatEmergencyHeatAndCool
+            )).toBe(ThermostatMode.Null);
+        });
+
+        it("maps Scrypted On to a supported heat/cool mode instead of illegal Auto", () => {
+            expect(protocolModeFromScrypted(
+                ScryptedThermostatMode.On,
+                ThermostatCapabilities.HeatCoolAndAuto
+            )).toBe(ThermostatMode.Auto);
+            expect(protocolModeFromScrypted(
+                ScryptedThermostatMode.On,
+                ThermostatCapabilities.HeatAndCool
+            )).toBe(ThermostatMode.Heat);
+            expect(protocolModeFromScrypted(
+                ScryptedThermostatMode.On,
+                ThermostatCapabilities.Cool
+            )).toBe(ThermostatMode.Cool);
+        });
+
+        it("exposes Emergency Heat only for capabilities 4 and 6", () => {
+            expect(supportsEmergencyHeat(ThermostatCapabilities.HeatEmergencyHeatAndCool)).toBe(true);
+            expect(supportsEmergencyHeat(ThermostatCapabilities.HeatEmergencyHeatCoolAndAuto)).toBe(true);
+            expect(supportsEmergencyHeat(ThermostatCapabilities.HeatAndCool)).toBe(false);
+            expect(supportsEmergencyHeat(ThermostatCapabilities.HeatCoolAndAuto)).toBe(false);
         });
     });
 });

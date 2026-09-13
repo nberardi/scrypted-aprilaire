@@ -127,6 +127,56 @@ export const HUMIDIFICATION_AUTO_SETPOINT_MIN = 1;
 export const HUMIDIFICATION_AUTO_SETPOINT_MAX = 7;
 /** Used only when the thermostat has not yet reported a setpoint to turn on with. */
 export const HUMIDIFICATION_SETPOINT_FALLBACK = 35;
+/**
+ * Mid Auto index when we must turn Auto humidification on without a known 1–7
+ * level. Must not be {@link HUMIDIFICATION_AUTO_SETPOINT_MAX}: clamping HomeKit
+ * %RH into 1–7 previously wrote 7 (max) for a 35% request.
+ */
+export const HUMIDIFICATION_AUTO_SETPOINT_FALLBACK = 4;
+
+export type HumidificationSetpointWindow = "off" | "auto" | "manual" | "reserved";
+
+export function isHumidificationAutoLevel(value: number | undefined | null): value is number {
+    return typeof value === "number" && Number.isInteger(value)
+        && value >= HUMIDIFICATION_AUTO_SETPOINT_MIN
+        && value <= HUMIDIFICATION_AUTO_SETPOINT_MAX;
+}
+
+export function isHumidificationPercentRh(value: number | undefined | null): value is number {
+    return typeof value === "number" && Number.isFinite(value)
+        && value >= HUMIDIFICATION_SETPOINT_MIN
+        && value <= HUMIDIFICATION_SETPOINT_MAX;
+}
+
+/**
+ * §2.4 wire byte. Auto (1–7) is an index, not %RH — never clamp 10–50 into 1–7.
+ */
+export function encodeHumidificationSetpointByte(options: {
+    on: boolean;
+    auto: boolean;
+    autoLevel?: number;
+    percentRh?: number;
+}): number {
+    if (!options.on)
+        return 0;
+
+    if (options.auto) {
+        if (isHumidificationAutoLevel(options.autoLevel))
+            return options.autoLevel;
+        // Request objects historically stuffed the auto index into humidificationSetpoint.
+        if (isHumidificationAutoLevel(options.percentRh))
+            return options.percentRh;
+        return HUMIDIFICATION_AUTO_SETPOINT_FALLBACK;
+    }
+
+    return resolveHumiditySetpointByte(
+        true,
+        options.percentRh,
+        HUMIDIFICATION_SETPOINT_MIN,
+        HUMIDIFICATION_SETPOINT_MAX,
+        HUMIDIFICATION_SETPOINT_FALLBACK
+    );
+}
 
 /**
  * Resolve the single wire byte for an IAQ humidity setpoint write.
@@ -175,7 +225,10 @@ export class DehumidificationSetpointRequest extends BasePayloadRequest {
 
 export class HumidificationSetpointRequest extends BasePayloadRequest {
     on: boolean;
+    /** Manual %RH (10–50). Ignored on Auto writes unless it is actually a 1–7 index. */
     humidificationSetpoint: number;
+    /** Auto window index 1–7. Required to turn Auto humidification on correctly. */
+    autoLevel?: number;
     /**
      * True when the thermostat reports humidification in Auto
      * ({@link HumidificationState.Auto}), whose setpoint window is 1–7 rather
@@ -187,22 +240,13 @@ export class HumidificationSetpointRequest extends BasePayloadRequest {
     }
 
     toBuffer(): Buffer {
-        let payload = Buffer.alloc(1);
-        payload.writeUint8(this.auto
-            ? resolveHumiditySetpointByte(
-                this.on,
-                this.humidificationSetpoint,
-                HUMIDIFICATION_AUTO_SETPOINT_MIN,
-                HUMIDIFICATION_AUTO_SETPOINT_MAX,
-                HUMIDIFICATION_AUTO_SETPOINT_MAX
-            )
-            : resolveHumiditySetpointByte(
-                this.on,
-                this.humidificationSetpoint,
-                HUMIDIFICATION_SETPOINT_MIN,
-                HUMIDIFICATION_SETPOINT_MAX,
-                HUMIDIFICATION_SETPOINT_FALLBACK
-            ), 0);
+        const payload = Buffer.alloc(1);
+        payload.writeUint8(encodeHumidificationSetpointByte({
+            on: this.on,
+            auto: this.auto,
+            autoLevel: this.autoLevel,
+            percentRh: this.humidificationSetpoint,
+        }), 0);
         return payload;
     }
 }
@@ -222,16 +266,35 @@ export class DehumidificationSetpointResponse extends BasePayloadResponse {
 }
 
 export class HumidificationSetpointResponse extends BasePayloadResponse {
-    on: boolean;
-    humidificationSetpoint: number;
+    on: boolean = false;
+    /** §2.4 window. Auto 1–7 is not %RH. */
+    window: HumidificationSetpointWindow = "off";
+    /** Manual %RH 10–50 only; undefined in Auto / Off. */
+    humidificationSetpoint?: number;
+    /** Auto index 1–7 only; undefined in Manual / Off. */
+    autoLevel?: number;
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Control, FunctionalDomainControl.HumidificationSetpoint);
 
         if (!this.hasRequiredLength(1))
             return;
 
-        this.on = payload.readUint8(0) !== 0;
-        this.humidificationSetpoint = payload.readUint8(0);
+        const value = payload.readUint8(0);
+        if (value === 0) {
+            this.window = "off";
+            this.on = false;
+        } else if (isHumidificationAutoLevel(value)) {
+            this.window = "auto";
+            this.on = true;
+            this.autoLevel = value;
+        } else if (isHumidificationPercentRh(value)) {
+            this.window = "manual";
+            this.on = true;
+            this.humidificationSetpoint = value;
+        } else {
+            this.window = "reserved";
+            this.on = false;
+        }
     }
 }
 
@@ -302,6 +365,97 @@ export enum ThermostatCapabilities {
     HeatEmergencyHeatAndCool = 4,
     HeatCoolAndAuto = 5,
     HeatEmergencyHeatCoolAndAuto = 6
+}
+
+/** Scrypted ThermostatMode string values — kept here so protocol tests need no SDK. */
+export const ScryptedThermostatMode = {
+    Off: "Off",
+    Cool: "Cool",
+    Heat: "Heat",
+    HeatCool: "HeatCool",
+    Auto: "Auto",
+    FanOnly: "FanOnly",
+    On: "On",
+} as const;
+
+export type ScryptedThermostatModeName =
+    (typeof ScryptedThermostatMode)[keyof typeof ScryptedThermostatMode];
+
+export function supportsAutoChangeover(capabilities?: ThermostatCapabilities): boolean {
+    return capabilities === ThermostatCapabilities.HeatCoolAndAuto
+        || capabilities === ThermostatCapabilities.HeatEmergencyHeatCoolAndAuto;
+}
+
+export function supportsEmergencyHeat(capabilities?: ThermostatCapabilities): boolean {
+    return capabilities === ThermostatCapabilities.HeatEmergencyHeatAndCool
+        || capabilities === ThermostatCapabilities.HeatEmergencyHeatCoolAndAuto;
+}
+
+/**
+ * UI modes for §2.7. HeatCool and Auto are omitted unless the thermostat
+ * actually lists Auto changeover — both write protocol mode Auto (5).
+ * Emergency Heat is a protocol mode Scrypted does not have; expose it as a setting.
+ */
+export function availableScryptedModesForCapabilities(
+    capabilities: ThermostatCapabilities
+): ScryptedThermostatModeName[] {
+    switch (capabilities) {
+        case ThermostatCapabilities.Cool:
+            return [ScryptedThermostatMode.FanOnly, ScryptedThermostatMode.Cool];
+        case ThermostatCapabilities.Heat:
+            return [ScryptedThermostatMode.FanOnly, ScryptedThermostatMode.Heat];
+        case ThermostatCapabilities.HeatAndCool:
+        case ThermostatCapabilities.HeatEmergencyHeatAndCool:
+            return [
+                ScryptedThermostatMode.FanOnly,
+                ScryptedThermostatMode.Heat,
+                ScryptedThermostatMode.Cool,
+            ];
+        case ThermostatCapabilities.HeatCoolAndAuto:
+        case ThermostatCapabilities.HeatEmergencyHeatCoolAndAuto:
+            return [
+                ScryptedThermostatMode.FanOnly,
+                ScryptedThermostatMode.Heat,
+                ScryptedThermostatMode.Cool,
+                ScryptedThermostatMode.HeatCool,
+                ScryptedThermostatMode.Auto,
+            ];
+        default:
+            return [ScryptedThermostatMode.FanOnly];
+    }
+}
+
+/**
+ * Map a Scrypted mode to the protocol Setpoint & Mode byte.
+ * HeatCool/Auto/On → Auto (5) only when §2.7 includes Auto; otherwise Null
+ * so we do not NACK or enable auto changeover on Heat+Cool-only equipment.
+ */
+export function protocolModeFromScrypted(
+    mode: ScryptedThermostatModeName | string,
+    capabilities?: ThermostatCapabilities
+): ThermostatMode {
+    switch (mode) {
+        case ScryptedThermostatMode.Cool:
+            return ThermostatMode.Cool;
+        case ScryptedThermostatMode.Heat:
+            return ThermostatMode.Heat;
+        case ScryptedThermostatMode.Off:
+        case ScryptedThermostatMode.FanOnly:
+            return ThermostatMode.Off;
+        case ScryptedThermostatMode.On:
+            if (supportsAutoChangeover(capabilities))
+                return ThermostatMode.Auto;
+            if (capabilities === ThermostatCapabilities.Cool)
+                return ThermostatMode.Cool;
+            return ThermostatMode.Heat;
+        case ScryptedThermostatMode.Auto:
+        case ScryptedThermostatMode.HeatCool:
+            return supportsAutoChangeover(capabilities)
+                ? ThermostatMode.Auto
+                : ThermostatMode.Null;
+        default:
+            return ThermostatMode.Null;
+    }
 }
 
 
