@@ -1,6 +1,6 @@
 # Protocol unit tests
 
-These tests are the oracle for protocol correctness. They assert documented wire behavior, not the current implementation’s quirks.
+These tests are the oracle for protocol correctness. They assert **wiki** wire behavior, not the current implementation’s quirks. The wiki is the spec; `helpers/guide-reference.ts` is derived from it. See [AGENTS.md](../AGENTS.md).
 
 ```bash
 npm test # single run
@@ -24,8 +24,10 @@ npm run test:watch
 | `functional-domain-setup.test.ts` | Setup domain |
 | `best-practices-bootstrap.test.ts` | Connect checklist |
 | `tcp-frame-reassembly.test.ts` | Stream framing, partial/batched frames, per-pass cap |
-| `nack-retry-queue.test.ts` | Sequence allocation, NACK retry policy, transport gating |
+| `nack-retry-queue.test.ts` | Sequence allocation, NACK retry policy, transport gating, reconnect requeue |
 | `connection-supervisor.test.ts` | Reconnect backoff, connect timeout, liveness probe |
+| `native-ids.test.ts` | Child nativeId suffixes and MAC recovery |
+| `hold-sync-echo-guard.test.ts` | Away/Vacation hold-sync echo suppression |
 
 ## Interpreting failures
 

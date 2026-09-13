@@ -360,8 +360,7 @@ describe("OutboundRequestQueue", () => {
             const { q, frames } = gatedQueue(writable);
 
             q.enqueue(sampleRequest(1));
-            // Reconnect clears the queue: a write held through an outage would be
-            // applied against thermostat state that has since changed.
+            // Intentional disconnect still clears the queue (AprilaireClient.disconnect).
             q.reset();
 
             writable.value = true;
@@ -369,6 +368,56 @@ describe("OutboundRequestQueue", () => {
 
             expect(frames).toHaveLength(0);
             expect(q.pendingCount).toBe(0);
+        });
+
+        it("requeues pending and in-flight writes across an unexpected reconnect", () => {
+            const writable = { value: true };
+            const { q, frames } = gatedQueue(writable);
+
+            expect(q.enqueue(sampleRequest(1))).toBe(0);
+            writable.value = false;
+            expect(q.enqueue(sampleRequest(2))).toBe(-1);
+            expect(q.inFlightCount).toBe(1);
+            expect(q.pendingCount).toBe(1);
+
+            q.requeueForReconnect();
+            expect(q.inFlightCount).toBe(0);
+            expect(q.pendingCount).toBe(2);
+
+            writable.value = true;
+            q.flush();
+
+            expect(frames).toHaveLength(3); // original in-flight send + two after reconnect
+            expect(frames[1].readUint8(6)).toBe(1);
+            expect(frames[2].readUint8(6)).toBe(2);
+            expect(frames[1].readUint8(1)).toBe(1); // new sequence, not the pre-drop SEQ 0
+            expect(frames[2].readUint8(1)).toBe(2);
+
+            q.reset();
+        });
+
+        it("cancels NACK retries on requeue so the command is sent with a new sequence", () => {
+            const writable = { value: true };
+            const { q, frames } = gatedQueue(writable);
+
+            const seq = q.enqueue(sampleRequest(9));
+            q.handleNack(NAckError.BufferFullOrDeviceBusy, seq);
+            expect(q.isBlocked).toBe(true);
+
+            q.requeueForReconnect();
+            expect(q.isBlocked).toBe(false);
+            expect(q.inFlightCount).toBe(0);
+            expect(q.pendingCount).toBe(1);
+
+            vi.advanceTimersByTime(NACK_RETRY_DELAY_MS * 3);
+            expect(frames).toHaveLength(1); // no same-sequence retry after the drop
+
+            q.flush();
+            expect(frames).toHaveLength(2);
+            expect(frames[1].readUint8(1)).not.toBe(seq);
+            expect(frames[1].readUint8(6)).toBe(9);
+
+            q.reset();
         });
     });
 

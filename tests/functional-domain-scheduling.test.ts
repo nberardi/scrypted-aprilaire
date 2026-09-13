@@ -17,6 +17,7 @@ import {
     HoldType,
     ScheduleHoldRequest,
     ScheduleHoldResponse,
+    scheduleHoldFingerprint,
 } from "../src/FunctionalDomainScheduling";
 import { FanModeSetting } from "../src/FunctionalDomainControl";
 import {
@@ -479,6 +480,44 @@ describe("Scheduling domainx", () => {
             expect(res.heatBlast).toBe(true);
             expect(res.domain).toBe(FunctionalDomain.Scheduling);
             expect(res.attribute).toBe(GuideAttribute.Scheduling.HeatBlast);
+        });
+
+        it("treats only wire value 1 as On (0 Off; reserved bytes are not On)", () => {
+            expect(new HeatBlastResponse(Buffer.from([0])).heatBlast).toBe(false);
+            expect(new HeatBlastResponse(Buffer.from([2])).heatBlast).toBe(false);
+            expect(new HeatBlastResponse(Buffer.from([255])).heatBlast).toBe(false);
+        });
+    });
+
+    describe("hold fingerprint (multi-stat echo suppression)", () => {
+        it("matches a write payload to the COS parse of that payload", () => {
+            const req = new ScheduleHoldRequest();
+            req.hold = HoldType.Away;
+            req.fan = FanModeSetting.Auto;
+            req.heatSetpoint = 16;
+            req.coolSetpoint = 28;
+
+            const res = new ScheduleHoldResponse(req.toBuffer());
+            expect(scheduleHoldFingerprint(res)).toBe(scheduleHoldFingerprint(req));
+        });
+
+        it("includes vacation end date using local calendar fields", () => {
+            const endDate = new Date(2026, 11, 25, 9, 15);
+            const req = new ScheduleHoldRequest();
+            req.hold = HoldType.Vacation;
+            req.endDate = endDate;
+            req.heatSetpoint = 18;
+            req.coolSetpoint = 27;
+
+            const res = new ScheduleHoldResponse(req.toBuffer());
+            expect(res.endDate).toBeDefined();
+            expect(scheduleHoldFingerprint(res)).toBe(scheduleHoldFingerprint(req));
+        });
+
+        it("changes when hold type changes", () => {
+            const away = scheduleHoldFingerprint({ hold: HoldType.Away });
+            const vacation = scheduleHoldFingerprint({ hold: HoldType.Vacation });
+            expect(away).not.toBe(vacation);
         });
     });
 });

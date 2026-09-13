@@ -12,8 +12,12 @@ import {
     SensorValuesRequest,
     SensorValuesResponse,
     TemperatureSensorStatus,
+    WRITTEN_ODT_DEFAULT_INTERVAL_MINUTES,
+    WRITTEN_ODT_MAX_INTERVAL_MINUTES,
+    WRITTEN_ODT_TIMEOUT_MINUTES,
     WrittenOutdoorTemperatureValueRequest,
     WrittenOutdoorTemperatureValueResponse,
+    clampWrittenOdtIntervalMinutes,
 } from "../src/FunctionalDomainSensors";
 import {
     FunctionalDomain,
@@ -243,8 +247,21 @@ describe("Sensors domainx", () => {
         it("documents <10 minute refresh requirement (protocol)", () => {
             // Plugin default interval is 1 minute — must stay under this ceiling.
             expect(WRITTEN_ODT_MAX_STALE_MS).toBe(10 * 60 * 1000);
-            const pluginDefaultIntervalMs = 1 * 60 * 1000;
+            expect(WRITTEN_ODT_TIMEOUT_MINUTES).toBe(10);
+            const pluginDefaultIntervalMs = WRITTEN_ODT_DEFAULT_INTERVAL_MINUTES * 60 * 1000;
             expect(pluginDefaultIntervalMs).toBeLessThan(WRITTEN_ODT_MAX_STALE_MS);
+        });
+
+        it("clamps the Automation ODT write interval to 1–9 minutes when sync is on", () => {
+            expect(clampWrittenOdtIntervalMinutes(1, false)).toBeUndefined();
+            expect(clampWrittenOdtIntervalMinutes(0, true)).toBe(WRITTEN_ODT_DEFAULT_INTERVAL_MINUTES);
+            expect(clampWrittenOdtIntervalMinutes(Number.NaN, true)).toBe(WRITTEN_ODT_DEFAULT_INTERVAL_MINUTES);
+            expect(clampWrittenOdtIntervalMinutes(-3, true)).toBe(WRITTEN_ODT_DEFAULT_INTERVAL_MINUTES);
+            expect(clampWrittenOdtIntervalMinutes(10, true)).toBe(WRITTEN_ODT_MAX_INTERVAL_MINUTES);
+            expect(clampWrittenOdtIntervalMinutes(15, true)).toBe(WRITTEN_ODT_MAX_INTERVAL_MINUTES);
+            expect(clampWrittenOdtIntervalMinutes(9, true)).toBe(9);
+            expect(clampWrittenOdtIntervalMinutes(1, true)).toBe(1);
+            expect(WRITTEN_ODT_MAX_INTERVAL_MINUTES).toBeLessThan(WRITTEN_ODT_TIMEOUT_MINUTES);
         });
     });
 });

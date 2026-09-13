@@ -181,7 +181,7 @@ export class OutboundRequestQueue {
         this.clearInFlight(sequence);
     }
 
-    /** Cancel timers and drop all state (disconnect / reconnect). */
+    /** Cancel timers and drop all state (intentional disconnect). */
     reset(): void {
         for (const cancel of this.retryCancels.values()) {
             cancel();
@@ -194,6 +194,34 @@ export class OutboundRequestQueue {
         this.inFlight.clear();
         this.pending = [];
         this.retryPending = 0;
+    }
+
+    /**
+     * Unexpected link loss / socket replace: keep unsent commands and put
+     * in-flight requests back on the pending queue (they get a new sequence
+     * on the next send). Intentional {@link reset} is what drops everything.
+     *
+     * In-flight frames may already have reached the thermostat; re-sending the
+     * same setpoint/mode write is idempotent enough. Losing the write leaves
+     * Scrypted showing a command the device never got.
+     */
+    requeueForReconnect(): void {
+        for (const cancel of this.retryCancels.values()) {
+            cancel();
+        }
+        this.retryCancels.clear();
+        for (const cancel of this.idleCancels.values()) {
+            cancel();
+        }
+        this.idleCancels.clear();
+        this.retryPending = 0;
+
+        const inflight: OutboundRequest[] = [];
+        for (const entry of this.inFlight.values()) {
+            inflight.push(entry.request);
+        }
+        this.inFlight.clear();
+        this.pending = [...inflight, ...this.pending];
     }
 
     /**

@@ -99,6 +99,35 @@ export class SensorValuesResponse extends BasePayloadResponse {
     }
 }
 
+/**
+ * §5.4: Automation ODT is invalid if not refreshed in less than 10 minutes.
+ * Host writes must be strictly more frequent than that. 9 minutes leaves margin
+ * for reconnect/backoff; 0 or invalid values fall back to 1 minute when sync is on.
+ */
+export const WRITTEN_ODT_TIMEOUT_MINUTES = 10;
+export const WRITTEN_ODT_MAX_INTERVAL_MINUTES = 9;
+export const WRITTEN_ODT_DEFAULT_INTERVAL_MINUTES = 1;
+
+/**
+ * Minutes between Written ODT refreshes, or `undefined` when sync is disabled
+ * (no timer). Always in 1..9 when sync is enabled.
+ */
+export function clampWrittenOdtIntervalMinutes(
+    minutes: number,
+    syncEnabled: boolean
+): number | undefined {
+    if (!syncEnabled)
+        return undefined;
+
+    if (!Number.isFinite(minutes) || minutes <= 0)
+        return WRITTEN_ODT_DEFAULT_INTERVAL_MINUTES;
+
+    return Math.min(
+        WRITTEN_ODT_MAX_INTERVAL_MINUTES,
+        Math.max(WRITTEN_ODT_DEFAULT_INTERVAL_MINUTES, Math.floor(minutes))
+    );
+}
+
 export class WrittenOutdoorTemperatureValueRequest extends BasePayloadRequest {
     /** Undefined leaves the value unchanged (Null on the wire). */
     temperature?: number;

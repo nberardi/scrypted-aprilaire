@@ -76,6 +76,14 @@ export class AprilaireClient extends EventEmitter {
         );
     }
 
+    get host(): string {
+        return this.client.host;
+    }
+
+    get port(): number {
+        return this.client.port;
+    }
+
     get connected(): boolean {
         return this.client.connected;
     }
@@ -86,9 +94,8 @@ export class AprilaireClient extends EventEmitter {
     }
 
     /**
-     * Queue a read. Requests issued while the link is down are dropped rather
-     * than replayed: the connect-time bootstrap burst and COS re-establish state
-     * on reconnect, so replaying stale reads would only add traffic.
+     * Queue a read. Unconfirmed commands survive unexpected disconnects and are
+     * re-sent on the new socket. Intentional {@link disconnect} still drops them.
      */
     read(request: BasePayloadRequest): void {
         this.ensureSupervising();
@@ -1262,9 +1269,9 @@ class AprilaireSocket extends EventEmitter {
         this.client.connect({ port: this.port, host: this.host });
     }
 
-    /** Intentional shutdown: no disconnect is announced to reconnect supervision. */
+    /** Intentional shutdown: drop queued commands; no reconnect announcement. */
     disconnect() {
-        this.teardown(false, "closed by host");
+        this.teardown(false, "closed by host", true);
     }
 
     /** Force the link down so supervision treats it as a failure and reconnects. */
@@ -1275,24 +1282,28 @@ class AprilaireSocket extends EventEmitter {
             return;
         }
         console.warn(this.format(`dropping connection: ${reason}`));
-        this.teardown(true, reason);
+        this.teardown(true, reason, false);
     }
 
     /**
      * Release the current socket and reset per-connection state.
      *
      * Listeners are removed before destroy so the replaced socket cannot emit a
-     * late `close` that would be mistaken for losing the new connection. Pending
-     * commands are dropped rather than replayed — stale writes must not be
-     * applied minutes later against changed thermostat state.
+     * late `close` that would be mistaken for losing the new connection.
+     *
+     * Unexpected drops keep pending/in-flight user commands so they flush on the
+     * next socket. Intentional disconnect (`dropQueue`) clears them.
      */
-    private teardown(announce: boolean, reason: string) {
+    private teardown(announce: boolean, reason: string, dropQueue: boolean = false) {
         const socket = this.client;
 
         this.client = undefined;
         this._state = ConnectionState.Disconnected;
         this.receiveBuffer = Buffer.alloc(0);
-        this.outboundQueue.reset();
+        if (dropQueue)
+            this.outboundQueue.reset();
+        else
+            this.outboundQueue.requeueForReconnect();
 
         if (socket) {
             socket.removeAllListeners();
