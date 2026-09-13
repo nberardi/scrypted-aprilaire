@@ -1,5 +1,5 @@
 import { FunctionalDomain, convertByteToTemperature, convertTemperatureToByte, FunctionalDomainSensors } from "./AprilaireClient";
-import { BasePayloadResponse, ResponseErrorType } from "./BasePayloadResponse";
+import { BasePayloadResponse } from "./BasePayloadResponse";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 
 /*
@@ -62,40 +62,25 @@ export class SensorValuesResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Sensors, FunctionalDomainSensors.SensorValues);
 
-        // Guide: 16 status/value bytes. Pad short payloads so partial replies still
-        // parse rather than throwing. Padding must distinguish the two byte roles:
-        // status bytes become NotInstalled (so consumers reject them) while value
-        // bytes become 0. Filling both with NotInstalled (3) used to decode as a
-        // plausible 3.0 °C reading on every missing sensor.
-        // Padding keeps this a usable response rather than an error: the padded
-        // status bytes truthfully report "no sensor", so consumers reject exactly
-        // the sensors that were missing from the reply.
-        let data = payload;
-        if (payload.length < SENSOR_VALUES_BYTE_COUNT) {
-            data = Buffer.alloc(SENSOR_VALUES_BYTE_COUNT);
-            payload.copy(data);
-            for (let offset = payload.length; offset < SENSOR_VALUES_BYTE_COUNT; offset++) {
-                const isStatusByte = offset % 2 === 0;
-                data.writeUint8(isStatusByte ? TemperatureSensorStatus.NotInstalled : 0, offset);
-            }
-        }
+        if (!this.hasRequiredLength(SENSOR_VALUES_BYTE_COUNT))
+            return;
 
-        this.indoorTemperatureStatus = data.readUint8(0);
-        this.indoorTemperature = convertByteToTemperature(data.readUint8(1));
-        this.indoorWiredRemoteTemperatureStatus = data.readUint8(2);
-        this.indoorWiredRemoteTemperature = convertByteToTemperature(data.readUint8(3));
-        this.outdoorTemperatureStatus = data.readUint8(4);
-        this.outdoorTemperature = convertByteToTemperature(data.readUint8(5));
-        this.indoorHumidityStatus = data.readUint8(6);
-        this.indoorHumidity = data.readUint8(7);
-        this.returningAirTemperatureStatus = data.readUint8(8);
-        this.returningAirTemperature = convertByteToTemperature(data.readUint8(9));
-        this.leavingAirTemperatureStatus = data.readUint8(10);
-        this.leavingAirTemperature = convertByteToTemperature(data.readUint8(11));
-        this.outdoorWirelessTemperatureStatus = data.readUint8(12);
-        this.outdoorWirelessTemperature = convertByteToTemperature(data.readUint8(13));
-        this.outdoorHumidityStatus = data.readUint8(14);
-        this.outdoorHumidity = data.readUint8(15);
+        this.indoorTemperatureStatus = payload.readUint8(0);
+        this.indoorTemperature = convertByteToTemperature(payload.readUint8(1));
+        this.indoorWiredRemoteTemperatureStatus = payload.readUint8(2);
+        this.indoorWiredRemoteTemperature = convertByteToTemperature(payload.readUint8(3));
+        this.outdoorTemperatureStatus = payload.readUint8(4);
+        this.outdoorTemperature = convertByteToTemperature(payload.readUint8(5));
+        this.indoorHumidityStatus = payload.readUint8(6);
+        this.indoorHumidity = payload.readUint8(7);
+        this.returningAirTemperatureStatus = payload.readUint8(8);
+        this.returningAirTemperature = convertByteToTemperature(payload.readUint8(9));
+        this.leavingAirTemperatureStatus = payload.readUint8(10);
+        this.leavingAirTemperature = convertByteToTemperature(payload.readUint8(11));
+        this.outdoorWirelessTemperatureStatus = payload.readUint8(12);
+        this.outdoorWirelessTemperature = convertByteToTemperature(payload.readUint8(13));
+        this.outdoorHumidityStatus = payload.readUint8(14);
+        this.outdoorHumidity = payload.readUint8(15);
     }
 }
 

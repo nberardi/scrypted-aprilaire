@@ -69,6 +69,11 @@ describe("Status domainx", () => {
             expect(buf[22]).toBe(1); // Controlling Sensor Values
             expect(buf[24]).toBe(1); // Thermostat Status
             expect(buf[25]).toBe(1); // IAQ Status
+            expect(buf[8]).toBe(0); // Fresh Air — no product surface
+            expect(buf[9]).toBe(0); // Air Cleaning
+            expect(buf[17]).toBe(0); // Alerts Status
+            expect(buf[19]).toBe(0); // Backlight
+            expect(buf[20]).toBe(0); // Location & Name
         });
 
         it("subscription values are only 0 or 1", () => {
@@ -131,13 +136,10 @@ describe("Status domainx", () => {
             expect(res.toFlags()[28]).toBe(0);
         });
 
-        it("CosResponse pads short payloads with false", () => {
+        it("CosResponse flags a short payload as malformed", () => {
             const res = new CosResponse(Buffer.from([1, 0, 1]));
-            expect(res.subscriptions).toHaveLength(29);
-            expect(res.subscriptions[0]).toBe(true);
-            expect(res.subscriptions[2]).toBe(true);
-            expect(res.subscriptions[3]).toBe(false);
-            expect(res.subscriptions[28]).toBe(false);
+            expect(res.responseError).toBe(ResponseErrorType.PayloadMalformed);
+            expect(res.isEnabled(CosSubscriptionIndex.InstallerThermostatSettings)).toBe(false);
         });
     });
 

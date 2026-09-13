@@ -1,10 +1,6 @@
 /**
- * Connection supervision
- *
- * The guide's design rule is "prefer COS + Sync over continuous polling", so a
- * healthy link is often silent. These tests pin the two behaviors that keeps
- * that safe: reconnect with backoff after any drop, and a liveness probe that
- * detects a half-open socket instead of trusting `connected` forever.
+ * Connection supervision: reconnect with backoff after a drop, and abandon
+ * connect attempts that never become ready. Half-open sockets are TCP keepalive.
  *
  * Timers and the clock are injected, so nothing here waits on wall time.
  */
@@ -70,8 +66,6 @@ const OPTIONS = {
     factor: 2,
     jitterRatio: 0,
     connectTimeoutMs: 20_000,
-    probeAfterMs: 300_000,
-    probeTimeoutMs: 20_000,
 };
 
 describe("computeBackoffDelay", () => {
@@ -118,22 +112,19 @@ describe("computeBackoffDelay", () => {
 describe("ConnectionSupervisor", () => {
     let clock: FakeClock;
     let connects: number;
-    let probes: number;
     let drops: string[];
     let supervisor: ConnectionSupervisor;
 
     beforeEach(() => {
         clock = new FakeClock();
         connects = 0;
-        probes = 0;
         drops = [];
         supervisor = new ConnectionSupervisor(
             {
                 connect: () => { connects++; },
-                probe: () => { probes++; },
                 drop: (reason) => { drops.push(reason); },
             },
-            { ...OPTIONS, schedule: clock.schedule, now: clock.now, random: () => 0.5 }
+            { ...OPTIONS, schedule: clock.schedule, random: () => 0.5 }
         );
     });
 
@@ -210,56 +201,7 @@ describe("ConnectionSupervisor", () => {
         expect(drops).toHaveLength(0);
     });
 
-    it("probes after a quiet period and accepts the reply", () => {
-        supervisor.start();
-        supervisor.notifyConnected();
-
-        clock.advance(OPTIONS.probeAfterMs - 1);
-        expect(probes).toBe(0);
-
-        clock.advance(1);
-        expect(probes).toBe(1);
-        expect(supervisor.isProbePending).toBe(true);
-
-        supervisor.notifyActivity();
-        expect(supervisor.isProbePending).toBe(false);
-
-        clock.advance(OPTIONS.probeTimeoutMs * 2);
-        expect(drops).toHaveLength(0);
-    });
-
-    // The half-open socket case: the OS still reports a live connection, so only
-    // an unanswered probe reveals that writes are going nowhere.
-    it("drops the link when a probe goes unanswered", () => {
-        supervisor.start();
-        supervisor.notifyConnected();
-
-        clock.advance(OPTIONS.probeAfterMs);
-        expect(probes).toBe(1);
-
-        clock.advance(OPTIONS.probeTimeoutMs - 1);
-        expect(drops).toHaveLength(0);
-
-        clock.advance(1);
-        expect(drops).toHaveLength(1);
-        expect(drops[0]).toContain("no reply to liveness probe");
-    });
-
-    it("does not probe a link that keeps delivering traffic", () => {
-        supervisor.start();
-        supervisor.notifyConnected();
-
-        // Traffic every half period keeps resetting the quiet clock.
-        for (let i = 0; i < 6; i++) {
-            clock.advance(OPTIONS.probeAfterMs / 2);
-            supervisor.notifyActivity();
-        }
-
-        expect(probes).toBe(0);
-        expect(drops).toHaveLength(0);
-    });
-
-    it("stops probing and reconnecting after stop()", () => {
+    it("stops reconnecting after stop()", () => {
         supervisor.start();
         supervisor.notifyConnected();
         supervisor.stop();
@@ -268,17 +210,15 @@ describe("ConnectionSupervisor", () => {
         expect(supervisor.isLinkUp).toBe(false);
 
         supervisor.notifyDisconnected();
-        clock.advance(OPTIONS.probeAfterMs + OPTIONS.probeTimeoutMs + 60_000);
+        clock.advance(60_000);
 
         expect(connects).toBe(1);
-        expect(probes).toBe(0);
         expect(drops).toHaveLength(0);
     });
 
     it("leaves no live timers behind after stop()", () => {
         supervisor.start();
         supervisor.notifyConnected();
-        clock.advance(OPTIONS.probeAfterMs);
         supervisor.notifyDisconnected();
 
         supervisor.stop();

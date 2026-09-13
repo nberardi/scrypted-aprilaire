@@ -8,7 +8,7 @@ import { ThermostatAndIAQAvailableResponse, FreshAirSettingsResponse, AirCleanin
 import { MacAddressResponse, ThermostatNameResponse, RevisionAndModelResponse, sanitizeIdentificationText } from "./FunctionalDomainIdentification";
 import { ControllingSensorsStatusAndValueResponse, SensorValuesResponse, WrittenOutdoorTemperatureValueResponse } from "./FunctionalDomainSensors";
 import { ThermostatInstallerSettingsResponse, ScaleResponse, DateAndTimeRequest, DateAndTimeResponse } from "./FunctionalDomainSetup";
-import { CosRequest, CosReadRequest, CosResponse, IAQStatusResponse, ThermostatStatusResponse, SyncResponse, ThermostatErrorResponse, OfflineResponse } from "./FunctionalDomainStatus";
+import { CosRequest, CosResponse, IAQStatusResponse, ThermostatStatusResponse, SyncResponse, ThermostatErrorResponse, OfflineResponse } from "./FunctionalDomainStatus";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse, NackResponse } from "./BasePayloadResponse";
 import { AwaySettingsResponse, HeatBlastResponse, ScheduleHoldResponse } from "./FunctionalDomainScheduling";
@@ -19,33 +19,13 @@ import { ConnectionSupervisor, ConnectionSupervisorOptions } from "./ConnectionS
 export class AprilaireClient extends EventEmitter {
     private client: AprilaireSocket;
     private supervisor: ConnectionSupervisor;
-    /** Socket event wiring is installed once; reconnects reuse it. */
     private listenersWired: boolean = false;
     private ready: boolean = false;
-    /** True once a non-empty name was received, both attrs NACK'd, or the grace timer expired. */
-    private nameSettled: boolean = false;
-    /** Attributes that permanently NACK'd for Thermostat Name (0x05 / legacy 0x04). */
-    private nameNacks = new Set<number>();
-    private nameWaitTimer?: ReturnType<typeof setTimeout>;
-    /** Periodic Setup/DateAndTime rewrite (guide: at least monthly). */
     private dateTimeResyncTimer?: ReturnType<typeof setInterval>;
 
-    /**
-     * Clock resync interval. Guide §J.3: refresh at least monthly.
-     *
-     * IMPORTANT: must be ≤ 2^31−1 ms (~24.8 days). Node’s setInterval uses a
-     * 32-bit signed delay; larger values overflow and become ~1 ms, which
-     * floods Setup/DateAndTime writes (attribute 4) every millisecond.
-     * 7 days is well under that ceiling and still satisfies “at least monthly.”
-     */
+    /** Weekly clock rewrite (must be ≤ 2^31−1 ms so Node setInterval does not overflow). */
     static readonly DATE_TIME_RESYNC_MS = 7 * 24 * 60 * 60 * 1000;
-    /** Node timers reject delays above this (signed 32-bit max). */
     static readonly MAX_TIMER_DELAY_MS = 0x7fffffff;
-    /**
-     * How long to wait for Identification/Thermostat Name after mac+fw+system
-     * before discovering as the generic "Thermostat" fallback.
-     */
-    static readonly NAME_WAIT_MS = 2000;
     static readonly DEFAULT_NAME = "Thermostat";
 
     name: string;
@@ -62,13 +42,6 @@ export class AprilaireClient extends EventEmitter {
         this.supervisor = new ConnectionSupervisor(
             {
                 connect: () => this.client.connect(),
-                // Identification/MAC is read-only, cheap, and always supported —
-                // a safe way to prove the link still carries traffic.
-                probe: () => this.client.sendRequest(
-                    Action.ReadRequest,
-                    FunctionalDomain.Identification,
-                    FunctionalDomainIdentification.MacAddress
-                ),
                 drop: (reason) => this.client.dropConnection(reason),
                 log: (message) => console.info(`[${this.client.host}:${this.client.port}] ${message}`),
             },
@@ -134,46 +107,22 @@ export class AprilaireClient extends EventEmitter {
             self.supervisor.notifyConnected();
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.MacAddress);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.RevisionAndModel);
-            // Guide: name is attribute 0x05. Some field firmware also answers 0x04 (legacy).
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
-            self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatNameLegacy);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
-            // Guide §J.1 / §7.1: write desired COS map, then optionally read back for diagnostics.
             self.client.writeObjectRequest(new CosRequest());
-            self.client.readObjectRequest(new CosReadRequest());
-            // Guide §J.3 / Setup §1.4: automation owns the thermostat clock (local wall time).
             self.syncDateAndTime();
             self.startDateTimeResync();
-
             self.emit("connected", self);
         });
         this.client.on("disconnected", (reason?: string) => {
             self.stopDateTimeResync();
-            self.clearNameWait();
             self.supervisor.notifyDisconnected(reason);
             self.emit("disconnected", self, reason);
         });
         this.client.on("response", (response: BasePayloadResponse) => {
-            // Any parsed frame proves the link is alive and answers a pending probe.
-            self.supervisor.notifyActivity();
             this.clientResponse(response);
         });
         this.client.on("nack", (event: PermanentNackEvent) => {
-            // Name is optional. Only settle to the default after *both* 0x05 and legacy 0x04 NACK
-            // (or the grace timer fires) — a single NACK must not block the other attribute.
-            if (
-                event.request?.domain === FunctionalDomain.Identification &&
-                (event.request?.attribute === FunctionalDomainIdentification.ThermostatName ||
-                    event.request?.attribute === FunctionalDomainIdentification.ThermostatNameLegacy)
-            ) {
-                self.nameNacks.add(event.request.attribute);
-                if (
-                    self.nameNacks.has(FunctionalDomainIdentification.ThermostatName) &&
-                    self.nameNacks.has(FunctionalDomainIdentification.ThermostatNameLegacy)
-                ) {
-                    self.settleName(AprilaireClient.DEFAULT_NAME, "nack-both");
-                }
-            }
             self.emit("nack", event, self);
         });
     }
@@ -181,14 +130,10 @@ export class AprilaireClient extends EventEmitter {
     disconnect() {
         this.supervisor.stop();
         this.stopDateTimeResync();
-        this.clearNameWait();
         this.client.disconnect();
     }
 
-    /**
-     * Write Setup/DateAndTime with the host's **local** wall-clock time
-     * (not UTC). Thermostat schedules are local.
-     */
+    /** Write Setup/DateAndTime from the host's local wall clock. */
     syncDateAndTime(when: Date = new Date()): void {
         const request = DateAndTimeRequest.fromLocalDate(when);
         this.client.writeObjectRequest(request);
@@ -196,7 +141,6 @@ export class AprilaireClient extends EventEmitter {
 
     private startDateTimeResync(): void {
         this.stopDateTimeResync();
-        // Clamp so a future constant change cannot reintroduce the 1ms flood.
         const delayMs = Math.min(
             AprilaireClient.DATE_TIME_RESYNC_MS,
             AprilaireClient.MAX_TIMER_DELAY_MS
@@ -226,17 +170,8 @@ export class AprilaireClient extends EventEmitter {
 
         else if (response instanceof ThermostatNameResponse) {
             const cleaned = sanitizeIdentificationText(response.name);
-            const location = sanitizeIdentificationText(response.postalCode);
-            console.info(
-                `ThermostatName attr=${response.attribute}: name="${cleaned}" location="${location}"`
-            );
-            if (cleaned) {
-                // Prefer a real device-configured name over the generic fallback.
-                this.settleName(cleaned, `response-attr${response.attribute}`);
-            } else if (!this.nameSettled) {
-                // Empty body on one attribute — keep waiting for the other / grace timer.
-                console.info(`ThermostatName attr=${response.attribute}: empty name, waiting`);
-            }
+            if (cleaned)
+                this.settleName(cleaned);
         }
 
         else if (response instanceof RevisionAndModelResponse) {
@@ -252,83 +187,31 @@ export class AprilaireClient extends EventEmitter {
         this.emit("response", response, this);
     }
 
-    /**
-     * Apply a display name. Emits `"name"` when the label changes after ready so
-     * the plugin can rename already-discovered Scrypted devices.
-     */
-    private settleName(name: string, reason: string): void {
-        const next = name?.trim() || AprilaireClient.DEFAULT_NAME;
+    private settleName(name: string): void {
+        const next = name.trim() || AprilaireClient.DEFAULT_NAME;
         const prev = this.name;
-        // Never let an empty/default response clobber a real name already learned.
-        if (
-            this.nameSettled &&
-            prev &&
-            prev !== AprilaireClient.DEFAULT_NAME &&
-            next === AprilaireClient.DEFAULT_NAME
-        ) {
+        if (prev && prev !== AprilaireClient.DEFAULT_NAME && next === AprilaireClient.DEFAULT_NAME)
             return;
-        }
 
         this.name = next;
-        this.nameSettled = true;
-        this.clearNameWait();
-
-        console.info(`thermostat name settled (${reason}): "${prev ?? ""}" → "${next}" ready=${this.ready}`);
-
-        // Always notify once ready so the plugin can force-rename Scrypted devices
-        // (onDeviceDiscovered alone does not override an existing device name).
-        if (this.ready && prev !== next) {
+        if (this.ready && prev !== next)
             this.emit("name", this, prev);
-        }
     }
 
-    /** Re-read name attributes (used after connect / to recover late responses). */
     requestThermostatName(): void {
         this.client.sendRequest(
             Action.ReadRequest,
             FunctionalDomain.Identification,
             FunctionalDomainIdentification.ThermostatName
         );
-        this.client.sendRequest(
-            Action.ReadRequest,
-            FunctionalDomain.Identification,
-            FunctionalDomainIdentification.ThermostatNameLegacy
-        );
     }
 
-    private clearNameWait(): void {
-        if (this.nameWaitTimer) {
-            clearTimeout(this.nameWaitTimer);
-            this.nameWaitTimer = undefined;
-        }
-    }
-
-    /**
-     * Ready when mac + firmware + system are known.
-     * Name is preferred but not required: wait up to {@link NAME_WAIT_MS} for
-     * Identification/5, then fall back to {@link DEFAULT_NAME}. This avoids the
-     * race where IAQ availability arrives before the name and devices are
-     * permanently labeled "Thermostat".
-     */
+    /** Ready once MAC, firmware, and IAQ availability are known. Name is optional. */
     private tryEmitReady(): void {
         if (this.ready)
             return;
         if (!this.mac || !this.firmware || !this.system)
             return;
-
-        if (!this.nameSettled) {
-            if (!this.nameWaitTimer) {
-                this.nameWaitTimer = setTimeout(() => {
-                    this.nameWaitTimer = undefined;
-                    if (!this.nameSettled) {
-                        this.settleName(this.name || AprilaireClient.DEFAULT_NAME, "timeout");
-                        this.tryEmitReady();
-                    }
-                }, AprilaireClient.NAME_WAIT_MS);
-                this.nameWaitTimer.unref?.();
-            }
-            return;
-        }
 
         if (!this.name)
             this.name = AprilaireClient.DEFAULT_NAME;
@@ -359,10 +242,6 @@ export enum FunctionalDomain {
     Identification = 8,
     Messaging = 9,
     Display = 10,
-    Weather = 13,
-    FirmwareUpdate = 14,
-    DebugCommands = 15,
-    NAck = 16
 }
 
 export enum FunctionalDomainSetup {
@@ -379,12 +258,6 @@ export enum FunctionalDomainSetup {
 export enum FunctionalDomainIdentification {
     RevisionAndModel = 1,
     MacAddress = 2,
-    /**
-     * Legacy Thermostat Name attribute observed on some firmware (same payload as 0x05).
-     * pyaprilaire maps both 4 and 5; request both so names aren't lost.
-     */
-    ThermostatNameLegacy = 4,
-    /** Thermostat Name attribute is 0x05 (guide) */
     ThermostatName = 5
 }
 
@@ -481,16 +354,7 @@ export enum NAckError {
 /** Largest magnitude the 6 integer bits plus the half-degree bit can represent. */
 export const MAX_ENCODABLE_TEMPERATURE_C = 63.5;
 
-/**
- * Encode Celsius to protocol temperature byte:
- * bit 7 = sign, bit 6 = 0.5 °C, bits 5–0 = integer magnitude. 0 = Null on writes.
- *
- * Magnitudes above {@link MAX_ENCODABLE_TEMPERATURE_C} do not fit in bits 5–0 and
- * would silently wrap into an unrelated temperature (100 °C would encode as the
- * byte for 36.5 °C). Clamp instead: an out-of-range setpoint is rejected by the
- * thermostat with NACK 0x10, which is recoverable, whereas a wrapped value is
- * accepted as a plausible-looking wrong temperature.
- */
+/** Encode °C: bit 7 sign, bit 6 half-degree, bits 5–0 magnitude. Clamp so values cannot wrap. */
 export function convertTemperatureToByte(temperature: number): number {
     if (!Number.isFinite(temperature)) {
         console.warn(`temperature ${temperature} is not a finite number; encoding as Null`);
@@ -809,14 +673,8 @@ export function generateCrc(data: Buffer): number {
 }
 
 /**
- * One complete, CRC-validated Aprilaire TCP frame extracted from a byte stream.
- *
- * Wire layout: REV(1) SEQ(1) CNT(2 BE) + payload(CNT bytes) + CRC(1).
- * Full frame size = 4 + CNT + 1.
- *
- * For normal frames, `payload` is the data after action/domain/attribute (bytes [7, 4+CNT)).
- * For NACK (Action=6, CNT=2), layout is ACTION+STATUS; `domain` is FunctionalDomain.NAck,
- * `attribute` is the status code, and `payload` is a single status byte.
+ * One CRC-validated frame: REV SEQ CNT + payload + CRC.
+ * NACK is Action+Status only (`domain` is None, `attribute` is the status code).
  */
 export interface ReassembledFrame {
     revision: number;
@@ -845,26 +703,7 @@ export interface FrameReassemblyResult {
     crcFailures: number;
 }
 
-/**
- * Parse zero or more complete Aprilaire frames from a sticky TCP receive buffer.
- *
- * Accumulation rule: do not emit a frame until `buffer.length >= 4 + length + 1`
- * (header prefix + CNT payload + CRC). Incomplete tails stay in `remainder`.
- *
- * Multiple frames in one buffer are all extracted in order.
- *
- * CRC failure strategy (documented behavior for issue #17):
- * When a full candidate frame is present but CRC does not match, drop that
- * entire candidate (`4 + length + 1` bytes) and continue. Length is known from
- * the header, so we prefer dropping one frame over byte-by-byte resync.
- * Bad frames are never returned in `frames`. Callers should log each failure.
- *
- * Safety: at most {@link MAX_FRAMES_PER_PASS} candidates are processed per call
- * and remaining bytes stay in `remainder` (defends against pathological input).
- * A Sync dump can legitimately exceed that in one TCP segment, so callers must
- * keep re-parsing the remainder while a pass returns a full batch — otherwise
- * complete frames sit unparsed until the next `data` event.
- */
+/** Parse complete frames from a sticky TCP buffer. Bad CRC drops that candidate by known CNT. */
 export function reassembleFrames(buffer: Buffer, maxFrames: number = MAX_FRAMES_PER_PASS): FrameReassemblyResult {
     const frames: ReassembledFrame[] = [];
     let workingData = buffer;
@@ -903,16 +742,20 @@ export function reassembleFrames(buffer: Buffer, maxFrames: number = MAX_FRAMES_
         const sequence = workingData.readUint8(1);
         const action = workingData.readUint8(4) as Action;
 
-        // NACK CNT=2 → [Action][StatusCode], no domain/attribute.
-        // Byte layout: REV SEQ CNT_H CNT_L ACTION STATUS CRC
         if (action === Action.NAck) {
+            if (length < 2) {
+                crcFailures++;
+                workingData = workingData.subarray(frameSize);
+                count++;
+                continue;
+            }
             const statusCode = workingData.readUint8(5);
             frames.push({
                 revision,
                 sequence,
                 length,
                 action,
-                domain: FunctionalDomain.NAck,
+                domain: FunctionalDomain.None,
                 attribute: statusCode,
                 payload: Buffer.from([statusCode]),
                 crc,
@@ -1009,7 +852,6 @@ export class AprilaireResponsePayload {
                     case FunctionalDomainIdentification.MacAddress: 
                         return new MacAddressResponse(this.payload);
                     case FunctionalDomainIdentification.ThermostatName:
-                    case FunctionalDomainIdentification.ThermostatNameLegacy:
                         return new ThermostatNameResponse(this.payload, this.attribute);
                 }
                 break;
@@ -1314,8 +1156,8 @@ class AprilaireSocket extends EventEmitter {
             this.emit('disconnected', reason);
     }
 
-    readObjectRequest(request: BasePayloadRequest) { 
-        this.sendCommand(Action.ReadRequest, request.domain, request.attribute);
+    readObjectRequest(request: BasePayloadRequest) {
+        this.sendCommand(Action.ReadRequest, request.domain, request.attribute, request.toBuffer());
     }
 
     writeObjectRequest(request: BasePayloadRequest) {

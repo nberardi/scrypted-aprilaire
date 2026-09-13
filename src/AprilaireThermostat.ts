@@ -1,4 +1,4 @@
-import { Fan, FanMode, FanState, FanStatus, FilterMaintenance, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Setting, SettingValue, Settings, TemperatureCommand, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode } from '@scrypted/sdk';
+import { Fan, FanMode, FanState, FilterMaintenance, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff, Setting, SettingValue, Settings, TemperatureCommand, TemperatureSetting, TemperatureUnit, Thermometer, ThermostatMode } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
 import { AprilaireSystemType, AprilaireThermostatBase } from './AprilaireThermostatBase';
 import { DehumidificationSetpointResponse, FanModeSetting, HumidificationSetpointResponse, HumidificationState, ThermostatAndIAQAvailableResponse, ThermostatSetpointAndModeSettingsRequest, ThermostatSetpointAndModeSettingsResponse, ThermostatMode as TMode, enforceDeadband, DeadbandPreserve, availableScryptedModesForCapabilities, protocolModeFromScrypted, supportsAutoChangeover, supportsEmergencyHeat } from './FunctionalDomainControl';
@@ -33,8 +33,6 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
      */
     private _deadbandC: number = DEFAULT_DEADBAND_C;
 
-    readonly deviceOn = "On";
-    readonly deviceOff = "Off";
     readonly holdSchedule = HOLD_UI.Schedule;
     readonly holdTemporary = HOLD_UI.Temporary;
     readonly holdPermanent = HOLD_UI.Permanent;
@@ -49,25 +47,7 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
     /** All hold choices; Away is filtered out when installer Away is disabled. */
     readonly holdChoices = ["Schedule", "Temporary", "Permanent", "Away", "Vacation"] as const;
 
-    /**
-     * Deadband raw enum from installer settings (byte 13). Stable name for #15.
-     * Undefined until installer settings are received.
-     */
-    deadband?: number;
-
     storageSettings = new StorageSettings(this, {
-        host: {
-            title: "IP Address",
-            type: "string",
-            placeholder: "192.168.1.XX",
-            description: "The IP Address of the fan on your local network."
-        },
-        port: {
-            title: "Port",
-            type: "number",
-            placeholder: "8000",
-            description: "The port the termostat uses to communicate, typically 8000 for 8800 series, and 7000 for 6000 series thermostats."
-        },
         heatBlast: {
             title: "Heat Blast",
             type: "boolean",
@@ -110,8 +90,8 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         };
     }
 
-    async setHumidity(humidity: HumidityCommand) {
-        this.console.error("setHumidity function should not have been called from the Thermostat object");
+    async setHumidity(_humidity: HumidityCommand) {
+        // Humidity writes belong on the humidifier/dehumidifier children.
     }
 
     async setFan(fan: FanState): Promise<void> {
@@ -201,6 +181,7 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
             return;
 
         const uiValue = String(newValue);
+        const isAway = uiValue === this.holdAway;
         const { heatSetpoint, coolSetpoint } = this.currentHoldSetpoints();
         const fan = this.currentFanModeSetting();
         const dehumidifierSetpoint = this.humiditySetting?.dehumidifierSetpoint;
@@ -212,7 +193,8 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
             endDate = new Date(Date.now() + AprilaireThermostat.DEFAULT_VACATION_HOLD_MS);
         }
 
-        const request = buildScheduleHoldRequest(uiValue, {
+        // Away uses Scheduling/Away Settings on the thermostat; hold packet fields stay Null.
+        const request = buildScheduleHoldRequest(uiValue, isAway ? {} : {
             fan,
             heatSetpoint,
             coolSetpoint,
@@ -304,13 +286,6 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
         this.client.write(request);
     }
 
-    /**
-     * When both heat and cool setpoints are present on a write (or can be inferred
-     * from current Auto dual-setpoint state), ensure cool − heat ≥ deadband.
-     *
-     * Preserve policy: keep the setpoint the user is changing; adjust the opposing
-     * one. If both change (or both are newly written), preserve heat and raise cool.
-     */
     private applyDeadbandToRequest(
         request: ThermostatSetpointAndModeSettingsRequest,
         effectiveMode: ThermostatMode | undefined
@@ -324,52 +299,27 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
                 request.mode === TMode.Auto
             );
 
-        if (!isAuto) {
+        if (!isAuto)
             return;
-        }
 
         const current = this.currentHeatCoolSetpoints();
-        const heatWritten = Boolean(request.heatSetpoint);
-        const coolWritten = Boolean(request.coolSetpoint);
-
-        // Nothing to enforce unless at least one setpoint is being written.
-        if (!heatWritten && !coolWritten) {
+        const heatWritten = request.heatSetpoint != null;
+        const coolWritten = request.coolSetpoint != null;
+        if (!heatWritten && !coolWritten)
             return;
-        }
 
-        // Resolve both sides: written value takes precedence, else current Auto pair.
-        let heat = heatWritten ? request.heatSetpoint : current.heat;
-        let cool = coolWritten ? request.coolSetpoint : current.cool;
-        if (!heat || !cool) {
-            // Opposing setpoint unknown — cannot evaluate separation client-side.
+        const heat = heatWritten ? request.heatSetpoint : current.heat;
+        const cool = coolWritten ? request.coolSetpoint : current.cool;
+        if (!heat || !cool)
             return;
-        }
-
-        // Put both sides on the wire so the thermostat does not surprise-adjust.
-        request.heatSetpoint = heat;
-        request.coolSetpoint = cool;
 
         let preserve: DeadbandPreserve = "both";
-        if (heatWritten && !coolWritten) {
+        if (heatWritten && !coolWritten)
             preserve = "heat";
-        } else if (coolWritten && !heatWritten) {
+        else if (coolWritten && !heatWritten)
             preserve = "cool";
-        } else if (heatWritten && coolWritten && current.heat && current.cool) {
-            const heatChanged = heat !== current.heat;
-            const coolChanged = cool !== current.cool;
-            if (heatChanged && !coolChanged) {
-                preserve = "heat";
-            } else if (coolChanged && !heatChanged) {
-                preserve = "cool";
-            }
-        }
 
         const result = enforceDeadband(heat, cool, this._deadbandC, preserve);
-        if (result.adjusted) {
-            this.console.info(
-                `deadband ${this._deadbandC}°C: adjusted setpoints heat ${heat}→${result.heatSetpoint}, cool ${cool}→${result.coolSetpoint} (preserve=${preserve})`
-            );
-        }
         request.heatSetpoint = result.heatSetpoint;
         request.coolSetpoint = result.coolSetpoint;
     }
@@ -408,11 +358,7 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
 
     async setThermostatSetpoint(degrees: number): Promise<void> {
         let request = new ThermostatSetpointAndModeSettingsRequest();
-
         switch (this.temperatureSetting.mode) {
-            case ThermostatMode.Heat:
-                request.heatSetpoint = degrees;
-                break;
             case ThermostatMode.Cool:
                 request.coolSetpoint = degrees;
                 break;
@@ -420,19 +366,21 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
                 request.heatSetpoint = degrees;
                 break;
         }
-
+        this.applyDeadbandToRequest(request, this.temperatureSetting.mode);
         this.client.write(request);
     }
 
     async setThermostatSetpointHigh(high: number): Promise<void> {
         let request = new ThermostatSetpointAndModeSettingsRequest();
         request.coolSetpoint = high;
+        this.applyDeadbandToRequest(request, this.temperatureSetting.mode);
         this.client.write(request);
     }
 
     async setThermostatSetpointLow(low: number): Promise<void> {
         let request = new ThermostatSetpointAndModeSettingsRequest();
         request.heatSetpoint = low;
+        this.applyDeadbandToRequest(request, this.temperatureSetting.mode);
         this.client.write(request);
     }
 
@@ -468,7 +416,6 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
 
         else if (response instanceof ThermostatInstallerSettingsResponse) {
             this._installerSettings = response;
-            this.deadband = response.deadband;
             this._deadbandC = deadbandIndexToCelsius(response.deadband);
             this.temperatureUnit = response.scale === TemperatureScale.F ? TemperatureUnit.F : TemperatureUnit.C;
             this.console.info(
@@ -555,11 +502,7 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
                     tempSettings.mode = ThermostatMode.Heat;
                     break;
                 case TMode.Off:
-                    // Asymmetric on purpose: Scrypted Off and FanOnly both write
-                    // TMode.Off (the protocol has no separate fan-only mode), so
-                    // readback cannot distinguish them. Report FanOnly + on=false:
-                    // `on` carries the power state, and FanOnly keeps the fan
-                    // controls usable while heating/cooling is off.
+                    // Off and FanOnly both write protocol Off; read back FanOnly + on=false.
                     this.on = false;
                     this._emergencyHeatState = false;
                     this.storageSettings.values.emergencyHeat = false;

@@ -61,8 +61,8 @@ export enum CosSubscriptionIndex {
 export type CosSubscriptionOverrides = Partial<Record<CosSubscriptionIndex, boolean>>;
 
 /**
- * Default COS subscription vector used by the plugin at connect.
- * Must stay aligned with P1 runtime needs (installer, setpoints, hold, sensors, status).
+ * Subscribe only to attributes this plugin consumes (Best Practices: enable only what you use).
+ * Fresh air, air cleaning, backlight, alerts, name, and modules have no product surface.
  */
 export function defaultCosSubscriptionFlags(): number[] {
     const flags = new Array<number>(COS_SUBSCRIPTION_BYTE_COUNT).fill(0);
@@ -70,30 +70,19 @@ export function defaultCosSubscriptionFlags(): number[] {
     flags[CosSubscriptionIndex.ThermostatSetpointAndModeSettings] = 1;
     flags[CosSubscriptionIndex.DehumidificationSetpoint] = 1;
     flags[CosSubscriptionIndex.HumidificationSetpoint] = 1;
-    flags[CosSubscriptionIndex.FreshAirSetting] = 1;
-    flags[CosSubscriptionIndex.AirCleaningSettings] = 1;
     flags[CosSubscriptionIndex.ThermostatIAQAvailable] = 1;
     flags[CosSubscriptionIndex.AwaySettings] = 1;
     flags[CosSubscriptionIndex.ScheduleHold] = 1;
     flags[CosSubscriptionIndex.HeatBlast] = 1;
     flags[CosSubscriptionIndex.ServiceRemindersStatus] = 1;
-    flags[CosSubscriptionIndex.AlertsStatus] = 1;
-    flags[CosSubscriptionIndex.BacklightSettings] = 1;
-    flags[CosSubscriptionIndex.ThermostatLocationAndName] = 1;
     flags[CosSubscriptionIndex.ControllingSensorValues] = 1;
-    flags[CosSubscriptionIndex.OverTheAirOdtUpdateTimeout] = 1;
     flags[CosSubscriptionIndex.ThermostatStatus] = 1;
     flags[CosSubscriptionIndex.IAQStatus] = 1;
-    flags[CosSubscriptionIndex.ModelAndRevision] = 1;
     return flags;
 }
 
-/**
- * Write Status/COS — desired subscription map (§7.1 / §J.1).
- * Optional overrides flip individual bits without changing the rest of the default vector.
- */
+/** Write Status/COS — 29-byte subscription map. */
 export class CosRequest extends BasePayloadRequest {
-    /** 29 flags, each 0 or 1 */
     flags: number[];
 
     constructor(overrides?: CosSubscriptionOverrides) {
@@ -137,9 +126,12 @@ export class CosResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Status, FunctionalDomainStatus.COS);
 
-        this.subscriptions = [];
+        this.subscriptions = new Array<boolean>(COS_SUBSCRIPTION_BYTE_COUNT).fill(false);
+        if (!this.hasRequiredLength(COS_SUBSCRIPTION_BYTE_COUNT))
+            return;
+
         for (let i = 0; i < COS_SUBSCRIPTION_BYTE_COUNT; i++) {
-            this.subscriptions.push(i < payload.length ? payload.readUint8(i) === 1 : false);
+            this.subscriptions[i] = payload.readUint8(i) === 1;
         }
     }
 
@@ -172,13 +164,7 @@ export class SyncResponse extends BasePayloadResponse {
     }
 }
 
-/**
- * Write Status/Sync — the connect-time state dump that replaces individual reads.
- *
- * §7.2 defines a **2-byte** payload (start flag + reserved). A 1-byte write is
- * rejected with NACK 0x13 (incorrect write payload size) on firmware that
- * validates length, which would silently disable the whole COS bootstrap.
- */
+/** §7.2 Sync write: start flag + reserved. */
 export const SYNC_PAYLOAD_BYTE_COUNT = 2;
 
 export class SyncRequest extends BasePayloadRequest {
@@ -318,20 +304,6 @@ export class ThermostatErrorResponse extends BasePayloadResponse {
             return;
 
         this.thermostatError = payload.readUint8(0);
-    }
-}
-
-/** Read Status/Thermostat Error (§7.8). Also delivered by COS and the Sync dump. */
-export class ThermostatErrorRequest extends BasePayloadRequest {
-    constructor() {
-        super(FunctionalDomain.Status, FunctionalDomainStatus.ThermostatError);
-    }
-}
-
-/** Read Status/IAQ Status (§7.7) when COS/Sync has not yet supplied it. */
-export class IAQStatusRequest extends BasePayloadRequest {
-    constructor() {
-        super(FunctionalDomain.Status, FunctionalDomainStatus.IAQStatus);
     }
 }
 

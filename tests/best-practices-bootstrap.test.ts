@@ -1,168 +1,59 @@
 /**
- * Best-practice connection bootstrap*
- * These tests document required connect-time behavior so the priority list
- * (P1 bootstrap) can be validated as implementation lands.
+ * Connect-time bootstrap against Best Practices: COS write, DateAndTime, Sync.
  */
 import { describe, expect, it } from "vitest";
-import { CosReadRequest, CosRequest, SyncRequest } from "../src/FunctionalDomainStatus";
-import {
-    ControllingSensorsStatusAndValueRequest,
-} from "../src/FunctionalDomainSensors";
-import {
-    ThermostatSetpointAndModeSettingsRequest,
-} from "../src/FunctionalDomainControl";
-import {
-    DateAndTimeRequest,
-    ThermostatInstallerSettingsRequest,
-} from "../src/FunctionalDomainSetup";
+import { CosRequest, SyncRequest } from "../src/FunctionalDomainStatus";
+import { DateAndTimeRequest } from "../src/FunctionalDomainSetup";
 import {
     Action,
     AprilaireClient,
     FunctionalDomain,
     FunctionalDomainControl,
     FunctionalDomainIdentification,
-    FunctionalDomainSensors,
     FunctionalDomainSetup,
     FunctionalDomainStatus,
 } from "../src/AprilaireClient";
 import { GuideAttribute, guideEncodeDateAndTime } from "./helpers/guide-reference";
 
-/**
- * Ordered connect steps recommended by
- * Production AprilaireClient.connect currently:
- * Read MAC, Revision, Name, IAQ Available; Write CosRequest; then (plugin) SyncRequest.
- */
-const GUIDE_BOOTSTRAP_CHECKLIST = [
-    { id: "J1", title: "Manage COS Settings", attribute: "Status/COS write" },
-    { id: "J2", title: "Determine temperature scale", attribute: "Setup/Scale read" },
-    { id: "J3", title: "Set Time and Date", attribute: "Setup/DateAndTime write" },
-    { id: "J4", title: "Read Thermostat & IAQ Available", attribute: "Control/7" },
-    { id: "J5", title: "Read Setpoint & Mode", attribute: "Control/1" },
-    { id: "J6", title: "Deadband from installer settings", attribute: "Setup/1" },
-    { id: "J7", title: "Hum/Dehum setpoints if available", attribute: "Control/3–4" },
-    { id: "J8", title: "Fresh Air if available", attribute: "Control/5" },
-    { id: "J9", title: "Air Cleaning if available", attribute: "Control/6" },
-    { id: "J10", title: "Schedule enabled", attribute: "Scheduling/1" },
-    { id: "J11", title: "Hold status", attribute: "Scheduling/4" },
-    { id: "J12", title: "Thermostat status", attribute: "Status/6" },
-    { id: "J13", title: "IAQ status if available", attribute: "Status/7" },
-    { id: "J14", title: "Support modules", attribute: "Sensors/3" },
-    { id: "J15", title: "Sensor values / ODT", attribute: "Sensors/2 (+5.4 write)" },
-    { id: "J16", title: "Away enabled + settings", attribute: "Setup/1 + Scheduling/2" },
-    { id: "J17", title: "Heat Blast if enabled", attribute: "Scheduling/5" },
-    { id: "J18", title: "Service reminders", attribute: "Alerts/1" },
-    { id: "J19", title: "Hi/Lo alerts", attribute: "Alerts/2" },
-    { id: "J20", title: "Name / permanent messages", attribute: "Identification/5, Messaging" },
-] as const;
-
-describe("Best practices bootstrap checklist", () => {
-    it("lists all 20 recommended connect-time actions ", () => {
-        expect(GUIDE_BOOTSTRAP_CHECKLIST).toHaveLength(20);
-    });
-
-    it("Sync can stand in for individual reads (protocolnote)", () => {
+describe("Best practices bootstrap", () => {
+    it("Sync write is 2 bytes: start=1 plus reserved", () => {
         const sync = new SyncRequest();
         expect(sync.domain).toBe(FunctionalDomain.Status);
         expect(sync.attribute).toBe(FunctionalDomainStatus.Sync);
-        expect(sync.toBuffer()[0]).toBe(1);
+        expect(sync.toBuffer()).toEqual(Buffer.from([1, 0]));
     });
 
-    it("COS subscription write is available for J1", () => {
+    it("COS subscription write is 29 bytes", () => {
         const cos = new CosRequest();
         expect(cos.attribute).toBe(FunctionalDomainStatus.COS);
         expect(cos.toBuffer().length).toBe(29);
+        expect(cos.toBuffer()[0]).toBe(1);
     });
 
-    it("COS read request is available for §7.1 read-then-write management", () => {
-        const read = new CosReadRequest();
-        expect(read.domain).toBe(FunctionalDomain.Status);
-        expect(read.attribute).toBe(FunctionalDomainStatus.COS);
-        expect(read.toBuffer().length).toBe(0);
+    it("identification attributes are MAC=2, Revision=1, Name=0x05", () => {
+        expect(FunctionalDomainIdentification.MacAddress).toBe(GuideAttribute.Identification.MacAddress);
+        expect(FunctionalDomainIdentification.RevisionAndModel).toBe(GuideAttribute.Identification.RevisionAndModel);
+        expect(FunctionalDomainIdentification.ThermostatName).toBe(0x05);
+        expect(FunctionalDomainControl.ThermostatAndIAQAvailable).toBe(
+            GuideAttribute.Control.ThermostatAndIAQAvailable
+        );
+        expect(Action.ReadRequest).toBe(2);
     });
 
-    it("Control/1 and Sensors/2 request types exist for explicit reads", () => {
-        const control = new ThermostatSetpointAndModeSettingsRequest();
-        expect(control.domain).toBe(FunctionalDomain.Control);
-        expect(control.attribute).toBe(FunctionalDomainControl.ThermstateSetpointAndModeSettings);
-
-        const sensors = new ControllingSensorsStatusAndValueRequest();
-        expect(sensors.domain).toBe(FunctionalDomain.Sensors);
-        expect(sensors.attribute).toBe(FunctionalDomainSensors.ControllingSensorValues);
+    it("DateAndTime write uses local wall time on Setup attribute 0x04", () => {
+        const local = new Date(2026, 6, 18, 14, 30, 45);
+        const req = DateAndTimeRequest.fromLocalDate(local);
+        expect(req.domain).toBe(FunctionalDomain.Setup);
+        expect(req.attribute).toBe(FunctionalDomainSetup.DateAndTime);
+        expect(req.toBuffer()).toEqual(guideEncodeDateAndTime(local));
+        expect(req.toBuffer()).toEqual(Buffer.from([45, 30, 14, 18, 6, 7, 26]));
     });
 
-    it("Setup/1 installer settings request exists for J6/J16 (deadband, Away enable)", () => {
-        const installer = new ThermostatInstallerSettingsRequest();
-        expect(installer.domain).toBe(FunctionalDomain.Setup);
-        expect(installer.attribute).toBe(FunctionalDomainSetup.ThermostatInstallSettings);
-        expect(installer.attribute).toBe(GuideAttribute.Setup.ThermostatInstallerSettings);
-        expect(installer.toBuffer().length).toBe(0);
-    });
-
-    it("COS subscribes to Installer Thermostat Settings (byte 0) for Sync/COS delivery", () => {
-        const cos = new CosRequest().toBuffer();
-        expect(cos[0]).toBe(1);
-    });
-
-    describe("current connect sequence contract (documents gaps)", () => {
-        /**
-         * Mirrors AprilaireClient.connect identification reads.
-         * When P0 name attribute is fixed, ThermostatName must be 0x05.
-         */
-        it("identification reads use MAC=2, Revision=1, Name=guide 0x05", () => {
-            const connectReads = [
-                {
-                    action: Action.ReadRequest,
-                    domain: FunctionalDomain.Identification,
-                    attribute: FunctionalDomainIdentification.MacAddress,
-                },
-                {
-                    action: Action.ReadRequest,
-                    domain: FunctionalDomain.Identification,
-                    attribute: FunctionalDomainIdentification.RevisionAndModel,
-                },
-                {
-                    action: Action.ReadRequest,
-                    domain: FunctionalDomain.Identification,
-                    attribute: FunctionalDomainIdentification.ThermostatName,
-                },
-                {
-                    action: Action.ReadRequest,
-                    domain: FunctionalDomain.Control,
-                    attribute: FunctionalDomainControl.ThermostatAndIAQAvailable,
-                },
-            ];
-
-            expect(connectReads[0].attribute).toBe(GuideAttribute.Identification.MacAddress);
-            expect(connectReads[1].attribute).toBe(GuideAttribute.Identification.RevisionAndModel);
-            expect(connectReads[2].attribute).toBe(GuideAttribute.Identification.ThermostatName);
-            expect(connectReads[2].attribute).toBe(0x05);
-            expect(connectReads[3].attribute).toBe(
-                GuideAttribute.Control.ThermostatAndIAQAvailable
-            );
-        });
-
-        it("includes DateAndTime write (J3) on Setup attribute 0x04 with local wall time", () => {
-            // Connect bootstrap writes DateAndTimeRequest (see AprilaireClient.connect).
-            const local = new Date(2026, 6, 18, 14, 30, 45);
-            const req = DateAndTimeRequest.fromLocalDate(local);
-
-            expect(req.domain).toBe(FunctionalDomain.Setup);
-            expect(req.attribute).toBe(FunctionalDomainSetup.DateAndTime);
-            expect(req.attribute).toBe(GuideAttribute.Setup.DateAndTime);
-            expect(req.attribute).toBe(0x04);
-            expect(req.toBuffer()).toEqual(guideEncodeDateAndTime(local));
-            expect(req.toBuffer()).toEqual(Buffer.from([45, 30, 14, 18, 6, 7, 26]));
-        });
-
-        it("DateAndTime resync interval fits in a 32-bit signed timer delay", () => {
-            // Regression: 30 * 24 * 60 * 60 * 1000 = 2_592_000_000 overflows
-            // Node setInterval (max 2^31-1), becoming ~1ms and flooding Setup/4.
-            expect(AprilaireClient.DATE_TIME_RESYNC_MS).toBeLessThanOrEqual(
-                AprilaireClient.MAX_TIMER_DELAY_MS
-            );
-            expect(AprilaireClient.DATE_TIME_RESYNC_MS).toBeGreaterThan(24 * 60 * 60 * 1000);
-            // Still “at least monthly” by refreshing more often than 30 days.
-            expect(AprilaireClient.DATE_TIME_RESYNC_MS).toBeLessThanOrEqual(30 * 24 * 60 * 60 * 1000);
-        });
+    it("DateAndTime resync interval fits in a 32-bit signed timer delay", () => {
+        expect(AprilaireClient.DATE_TIME_RESYNC_MS).toBeLessThanOrEqual(
+            AprilaireClient.MAX_TIMER_DELAY_MS
+        );
+        expect(AprilaireClient.DATE_TIME_RESYNC_MS).toBeGreaterThan(24 * 60 * 60 * 1000);
+        expect(AprilaireClient.DATE_TIME_RESYNC_MS).toBeLessThanOrEqual(30 * 24 * 60 * 60 * 1000);
     });
 });

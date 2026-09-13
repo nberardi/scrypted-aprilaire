@@ -1,4 +1,4 @@
-import { Fan, FanState, FilterMaintenance, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, HumiditySettingStatus, OnOff } from '@scrypted/sdk';
+import { Fan, FanState, FilterMaintenance, HumidityCommand, HumidityMode, HumiditySensor, HumiditySetting, OnOff } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
 import { AprilaireSystemType, AprilaireThermostatBase } from './AprilaireThermostatBase';
 import { DehumidificationSetpointRequest, DehumidificationSetpointResponse, ThermostatAndIAQAvailableResponse } from './FunctionalDomainControl';
@@ -64,7 +64,7 @@ export class AprilaireDehumidifier extends AprilaireThermostatBase implements On
         if (!this.isUsableResponse(response))
             return;
 
-        let humiditySetting: HumiditySettingStatus = JSON.parse(JSON.stringify(this.humiditySetting));
+        let humiditySetting = { ...this.humiditySetting };
 
         if (response instanceof ServiceRemindersStatusResponse) {
             this.filterChangeIndication = response.dehumidifier;
