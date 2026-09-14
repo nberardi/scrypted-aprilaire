@@ -349,7 +349,7 @@ describe("TCP frame reassembly (issue #17)", () => {
     });
 
     describe("NACK frames", () => {
-        it("parses a valid NACK with no domain (status in attribute)", () => {
+        it("parses a valid NACK into FunctionalDomain.NAck with status attribute", () => {
             const nack = buildNackFrame({
                 sequence: 42,
                 status: NAckError.WriteValueOutOfRange,
@@ -360,7 +360,7 @@ describe("TCP frame reassembly (issue #17)", () => {
             expect(result.crcFailures).toBe(0);
             const f = result.frames[0];
             expect(f.action).toBe(Action.NAck);
-            expect(f.domain).toBe(FunctionalDomain.None);
+            expect(f.domain).toBe(FunctionalDomain.NAck);
             expect(f.attribute).toBe(NAckError.WriteValueOutOfRange);
             expect(f.payload.equals(Buffer.from([NAckError.WriteValueOutOfRange]))).toBe(true);
             expect(f.length).toBe(2);

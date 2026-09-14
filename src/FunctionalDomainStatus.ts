@@ -62,8 +62,8 @@ export type CosSubscriptionOverrides = Partial<Record<CosSubscriptionIndex, bool
 
 /**
  * Default COS subscription vector used by the plugin at connect.
- * Best Practices: enable only what you use. Fresh air, air cleaning, backlight,
- * alerts, name, ODT timeout, and model have no product surface yet.
+ * Must stay aligned with P1 runtime needs (installer, setpoints, hold, sensors, status).
+ * Fresh air / air cleaning stay subscribed for future implementation.
  */
 export function defaultCosSubscriptionFlags(): number[] {
     const flags = new Array<number>(COS_SUBSCRIPTION_BYTE_COUNT).fill(0);
@@ -71,14 +71,21 @@ export function defaultCosSubscriptionFlags(): number[] {
     flags[CosSubscriptionIndex.ThermostatSetpointAndModeSettings] = 1;
     flags[CosSubscriptionIndex.DehumidificationSetpoint] = 1;
     flags[CosSubscriptionIndex.HumidificationSetpoint] = 1;
+    flags[CosSubscriptionIndex.FreshAirSetting] = 1;
+    flags[CosSubscriptionIndex.AirCleaningSettings] = 1;
     flags[CosSubscriptionIndex.ThermostatIAQAvailable] = 1;
     flags[CosSubscriptionIndex.AwaySettings] = 1;
     flags[CosSubscriptionIndex.ScheduleHold] = 1;
     flags[CosSubscriptionIndex.HeatBlast] = 1;
     flags[CosSubscriptionIndex.ServiceRemindersStatus] = 1;
+    flags[CosSubscriptionIndex.AlertsStatus] = 1;
+    flags[CosSubscriptionIndex.BacklightSettings] = 1;
+    flags[CosSubscriptionIndex.ThermostatLocationAndName] = 1;
     flags[CosSubscriptionIndex.ControllingSensorValues] = 1;
+    flags[CosSubscriptionIndex.OverTheAirOdtUpdateTimeout] = 1;
     flags[CosSubscriptionIndex.ThermostatStatus] = 1;
     flags[CosSubscriptionIndex.IAQStatus] = 1;
+    flags[CosSubscriptionIndex.ModelAndRevision] = 1;
     return flags;
 }
 

@@ -22,8 +22,10 @@ export class AprilaireClient extends EventEmitter {
     /** Socket event wiring is installed once; reconnects reuse it. */
     private listenersWired: boolean = false;
     private ready: boolean = false;
-    /** True once a non-empty name was received, name NACKed, or the grace timer expired. */
+    /** True once a non-empty name was received, both attrs NACK'd, or the grace timer expired. */
     private nameSettled: boolean = false;
+    /** Attributes that permanently NACK'd for Thermostat Name (0x05 / legacy 0x04). */
+    private nameNacks = new Set<number>();
     private nameWaitTimer?: ReturnType<typeof setTimeout>;
     /** Periodic Setup/DateAndTime rewrite (guide: at least monthly). */
     private dateTimeResyncTimer?: ReturnType<typeof setInterval>;
@@ -132,8 +134,9 @@ export class AprilaireClient extends EventEmitter {
             self.supervisor.notifyConnected();
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.MacAddress);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.RevisionAndModel);
-            // Wiki: Thermostat Name is attribute 0x05. Incoming 0x04 is still parsed if firmware sends it.
+            // Guide: name is attribute 0x05. Some field firmware also answers 0x04 (legacy).
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatName);
+            self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Identification, FunctionalDomainIdentification.ThermostatNameLegacy);
             self.client.sendRequest(Action.ReadRequest, FunctionalDomain.Control, FunctionalDomainControl.ThermostatAndIAQAvailable);
             // Guide §J.1 / §7.1: write desired COS map, then optionally read back for diagnostics.
             self.client.writeObjectRequest(new CosRequest());
@@ -156,13 +159,20 @@ export class AprilaireClient extends EventEmitter {
             this.clientResponse(response);
         });
         this.client.on("nack", (event: PermanentNackEvent) => {
-            // Name is optional. Settle to the default if Identification/5 NACKs
-            // (or the grace timer fires).
+            // Name is optional. Only settle to the default after *both* 0x05 and legacy 0x04 NACK
+            // (or the grace timer fires) — a single NACK must not block the other attribute.
             if (
                 event.request?.domain === FunctionalDomain.Identification &&
-                event.request?.attribute === FunctionalDomainIdentification.ThermostatName
+                (event.request?.attribute === FunctionalDomainIdentification.ThermostatName ||
+                    event.request?.attribute === FunctionalDomainIdentification.ThermostatNameLegacy)
             ) {
-                self.settleName(AprilaireClient.DEFAULT_NAME, "nack-name");
+                self.nameNacks.add(event.request.attribute);
+                if (
+                    self.nameNacks.has(FunctionalDomainIdentification.ThermostatName) &&
+                    self.nameNacks.has(FunctionalDomainIdentification.ThermostatNameLegacy)
+                ) {
+                    self.settleName(AprilaireClient.DEFAULT_NAME, "nack-both");
+                }
             }
             self.emit("nack", event, self);
         });
@@ -279,6 +289,11 @@ export class AprilaireClient extends EventEmitter {
             FunctionalDomain.Identification,
             FunctionalDomainIdentification.ThermostatName
         );
+        this.client.sendRequest(
+            Action.ReadRequest,
+            FunctionalDomain.Identification,
+            FunctionalDomainIdentification.ThermostatNameLegacy
+        );
     }
 
     private clearNameWait(): void {
@@ -344,6 +359,10 @@ export enum FunctionalDomain {
     Identification = 8,
     Messaging = 9,
     Display = 10,
+    Weather = 13,
+    FirmwareUpdate = 14,
+    DebugCommands = 15,
+    NAck = 16
 }
 
 export enum FunctionalDomainSetup {
@@ -796,7 +815,7 @@ export function generateCrc(data: Buffer): number {
  * Full frame size = 4 + CNT + 1.
  *
  * For normal frames, `payload` is the data after action/domain/attribute (bytes [7, 4+CNT)).
- * For NACK (Action=6, CNT=2), layout is ACTION+STATUS; `domain` is FunctionalDomain.None,
+ * For NACK (Action=6, CNT=2), layout is ACTION+STATUS; `domain` is FunctionalDomain.NAck,
  * `attribute` is the status code, and `payload` is a single status byte.
  */
 export interface ReassembledFrame {
@@ -899,7 +918,7 @@ export function reassembleFrames(buffer: Buffer, maxFrames: number = MAX_FRAMES_
                 sequence,
                 length,
                 action,
-                domain: FunctionalDomain.None,
+                domain: FunctionalDomain.NAck,
                 attribute: statusCode,
                 payload: Buffer.from([statusCode]),
                 crc,

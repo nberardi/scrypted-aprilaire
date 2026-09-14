@@ -69,11 +69,13 @@ describe("Status domainx", () => {
             expect(buf[22]).toBe(1); // Controlling Sensor Values
             expect(buf[24]).toBe(1); // Thermostat Status
             expect(buf[25]).toBe(1); // IAQ Status
-            expect(buf[8]).toBe(0); // Fresh Air — no product surface
-            expect(buf[9]).toBe(0); // Air Cleaning
-            expect(buf[17]).toBe(0); // Alerts Status
-            expect(buf[19]).toBe(0); // Backlight
-            expect(buf[20]).toBe(0); // Location & Name
+            expect(buf[8]).toBe(1); // Fresh Air (future)
+            expect(buf[9]).toBe(1); // Air Cleaning (future)
+            expect(buf[17]).toBe(1); // Alerts Status
+            expect(buf[19]).toBe(1); // Backlight
+            expect(buf[20]).toBe(1); // Location & Name
+            expect(buf[23]).toBe(1); // ODT update timeout
+            expect(buf[26]).toBe(1); // Model and Revision
         });
 
         it("subscription values are only 0 or 1", () => {

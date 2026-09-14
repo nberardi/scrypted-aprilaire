@@ -307,7 +307,7 @@ describe("Packet frame & response factory ", () => {
                 0,
                 2,
                 Action.NAck,
-                FunctionalDomain.None,
+                FunctionalDomain.NAck,
                 NAckError.WriteValueOutOfRange,
                 Buffer.from([NAckError.WriteValueOutOfRange]),
                 0

@@ -54,7 +54,7 @@ export class NackResponse extends BasePayloadResponse {
     sequence?: number;
 
     constructor(statusCode: number, sequence?: number) {
-        super(Buffer.from([statusCode]), FunctionalDomain.None, statusCode);
+        super(Buffer.from([statusCode]), FunctionalDomain.NAck, statusCode);
         this.statusCode = statusCode;
         this.sequence = sequence;
     }
