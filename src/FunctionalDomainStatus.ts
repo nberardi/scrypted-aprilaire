@@ -61,8 +61,9 @@ export enum CosSubscriptionIndex {
 export type CosSubscriptionOverrides = Partial<Record<CosSubscriptionIndex, boolean>>;
 
 /**
- * Subscribe only to attributes this plugin consumes (Best Practices: enable only what you use).
- * Fresh air, air cleaning, backlight, alerts, name, and modules have no product surface.
+ * Default COS subscription vector used by the plugin at connect.
+ * Best Practices: enable only what you use. Fresh air, air cleaning, backlight,
+ * alerts, name, ODT timeout, and model have no product surface yet.
  */
 export function defaultCosSubscriptionFlags(): number[] {
     const flags = new Array<number>(COS_SUBSCRIPTION_BYTE_COUNT).fill(0);
@@ -81,8 +82,12 @@ export function defaultCosSubscriptionFlags(): number[] {
     return flags;
 }
 
-/** Write Status/COS — 29-byte subscription map. */
+/**
+ * Write Status/COS — desired subscription map (§7.1 / §J.1).
+ * Optional overrides flip individual bits without changing the rest of the default vector.
+ */
 export class CosRequest extends BasePayloadRequest {
+    /** 29 flags, each 0 or 1 */
     flags: number[];
 
     constructor(overrides?: CosSubscriptionOverrides) {
@@ -164,7 +169,13 @@ export class SyncResponse extends BasePayloadResponse {
     }
 }
 
-/** §7.2 Sync write: start flag + reserved. */
+/**
+ * Write Status/Sync — the connect-time state dump that replaces individual reads.
+ *
+ * §7.2 defines a **2-byte** payload (start flag + reserved). A 1-byte write is
+ * rejected with NACK 0x13 (incorrect write payload size) on firmware that
+ * validates length, which would silently disable the whole COS bootstrap.
+ */
 export const SYNC_PAYLOAD_BYTE_COUNT = 2;
 
 export class SyncRequest extends BasePayloadRequest {
@@ -304,6 +315,20 @@ export class ThermostatErrorResponse extends BasePayloadResponse {
             return;
 
         this.thermostatError = payload.readUint8(0);
+    }
+}
+
+/** Read Status/Thermostat Error (§7.8). Also delivered by COS and the Sync dump. */
+export class ThermostatErrorRequest extends BasePayloadRequest {
+    constructor() {
+        super(FunctionalDomain.Status, FunctionalDomainStatus.ThermostatError);
+    }
+}
+
+/** Read Status/IAQ Status (§7.7) when COS/Sync has not yet supplied it. */
+export class IAQStatusRequest extends BasePayloadRequest {
+    constructor() {
+        super(FunctionalDomain.Status, FunctionalDomainStatus.IAQStatus);
     }
 }
 

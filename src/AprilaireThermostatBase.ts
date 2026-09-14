@@ -1,16 +1,21 @@
-import { HumidityMode, Online, ScryptedDeviceBase, FanMode, Refresh, ThermostatMode } from '@scrypted/sdk';
+import { HumidityMode, Online, ScryptedDeviceBase, Setting, SettingValue, Settings, FanMode, Refresh, ThermostatMode } from '@scrypted/sdk';
 import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse, ResponseErrorType } from "./BasePayloadResponse";
-import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus, SensorValuesRequest, SensorValuesResponse } from './FunctionalDomainSensors';
+import { StorageSettings, StorageSettingsDevice } from '@scrypted/sdk/storage-settings';
+import { ControllingSensorsStatusAndValueResponse, TemperatureSensorStatus, HumiditySensorStatus, ControllingSensorsStatusAndValueRequest, SensorValuesRequest, SensorValuesResponse } from './FunctionalDomainSensors';
 import { OfflineResponse, ThermostatStatusRequest } from './FunctionalDomainStatus';
 
 export enum AprilaireSystemType {
     Thermostat,
     Humidifier,
     Dehumidifier,
+    Ventilation,
+    Purifier
 }
 
 export class AprilaireThermostatBase extends ScryptedDeviceBase implements Online, Refresh {
+    private last = new Map<string, BasePayloadResponse>();
+
     constructor(nativeId: string, public client: AprilaireClient, public systemType: AprilaireSystemType) {
         super(nativeId);
 
@@ -31,32 +36,43 @@ export class AprilaireThermostatBase extends ScryptedDeviceBase implements Onlin
             availableModes: [FanMode.Auto, FanMode.Manual]
         };
 
+        // Devices are constructed after the client's "ready", so start online.
         this.online = true;
         this.client.on("connected", () => { this.online = true; });
         this.client.on("disconnected", () => { this.online = false; });
 
+        // ensure that the modes are properly configured
         this.processResponse(client.system);
         this.client.on("response", this.processResponse.bind(this));
     }
 
     async getRefreshFrequency(): Promise<number> {
-        return 300;
+        return 300; // every 5 mins
     }
 
     async refresh(refreshInterface: string, userInitiated: boolean): Promise<void> {
-        if (userInitiated)
-            this.console.info("refresh", refreshInterface, userInitiated);
-
-        if (refreshInterface === "Thermometer" || refreshInterface === "HumiditySensor") {
+        if (refreshInterface === "TemperatureSetting") {
+            this.client.read(new ThermostatStatusRequest());
+            return;
+        } else if (refreshInterface === "Thermometer" || refreshInterface === "HumiditySensor" || refreshInterface === "Fan") {
+            // Full §5.1 array (RAT/LAT/wireless) + controlling 8-byte pair for outdoor sync.
             this.client.read(new SensorValuesRequest());
+            this.client.read(new ControllingSensorsStatusAndValueRequest());
             return;
         }
-        if (userInitiated && refreshInterface === "TemperatureSetting") {
-            this.client.read(new ThermostatStatusRequest());
-        }
+
+        // this needs to be implemented to support the refresh frequency
+        this.console.warn("refreshing", refreshInterface, userInitiated);
     }
 
-    /** Truncated payloads must not publish default/fabricated state. */
+    /**
+     * True when a response parsed cleanly enough to publish device state.
+     *
+     * A truncated or empty payload leaves a response holding only its class
+     * defaults; treating those as readings would publish fabricated state (for
+     * example an empty Status/Offline frame reading as "online"). Subclasses call
+     * this before their own `processResponse` work.
+     */
     protected isUsableResponse(response: BasePayloadResponse): boolean {
         if (!response)
             return false;
@@ -74,6 +90,8 @@ export class AprilaireThermostatBase extends ScryptedDeviceBase implements Onlin
     processResponse(response: BasePayloadResponse) {
         if (!this.isUsableResponse(response))
             return;
+
+        this.last.set(response.constructor.name, response);
 
         if (response instanceof ControllingSensorsStatusAndValueResponse || response instanceof SensorValuesResponse) {
             try {
@@ -94,7 +112,7 @@ export class AprilaireThermostatBase extends ScryptedDeviceBase implements Onlin
                     this.humidity = response.indoorHumidity;
                     this.console.info("indoor humidity: " + this.humidity + "%");
                 }
-                else if (response.indoorHumidityStatus !== TemperatureSensorStatus.NotInstalled)
+                else if (response.indoorHumidityStatus !== HumiditySensorStatus.NotInstalled)
                     this.console.error("indoor humidity sensor error: " + response.indoorHumidityStatus);
 
                 if (response.outdoorTemperatureStatus === TemperatureSensorStatus.NoError) {
@@ -104,7 +122,7 @@ export class AprilaireThermostatBase extends ScryptedDeviceBase implements Onlin
 
                 if (response.outdoorHumidityStatus === HumiditySensorStatus.NoError) {
                     this.console.info("outdoor humidity: " + response.outdoorHumidity + "%");
-                } else if (response.outdoorHumidityStatus !== TemperatureSensorStatus.NotInstalled)
+                } else if (response.outdoorHumidityStatus !== HumiditySensorStatus.NotInstalled)
                     this.console.error("outdoor humidity sensor error: " + response.outdoorHumidityStatus);
 
                 if (response instanceof SensorValuesResponse) {
@@ -129,7 +147,11 @@ export class AprilaireThermostatBase extends ScryptedDeviceBase implements Onlin
             } finally {
                 this.console.groupEnd();
             }
-        } else if (response instanceof OfflineResponse) {
+        }
+
+        else if (response instanceof OfflineResponse) {
+            // Status/Offline reports protocol availability — reflect it on the
+            // Online interface, not OnOff (it is not a power state).
             this.online = response.offline === false;
         }
     }

@@ -70,14 +70,12 @@ describe("Scheduling domainx", () => {
             expect(req.attribute).toBe(GuideAttribute.Scheduling.AwaySettings);
         });
 
-        it("snaps out-of-range heat/cool to the nearest documented index", () => {
+        it("rejects heat/cool outside documented away ranges", () => {
             const req = new AwaySettingsRequest();
             req.fan = FanModeSetting.Auto;
-            req.heatSetpoint = 20;
+            req.heatSetpoint = 20; // not in 15.5–18.5 table
             req.coolSetpoint = 26.5;
-            const buf = req.toBuffer();
-            expect(buf[1]).toBe(5); // 18.5 °C
-            expect(buf[2]).toBe(0); // 26.5 °C
+            expect(() => req.toBuffer()).toThrow();
         });
 
         it("snaps in-range off-grid setpoints to the nearest wire index", () => {
@@ -100,10 +98,11 @@ describe("Scheduling domainx", () => {
             }
         });
 
-        it("snaps missing setpoints to index 0 rather than throwing", () => {
+        it("rejects undefined/NaN setpoints instead of writing garbage", () => {
             const req = new AwaySettingsRequest();
             req.fan = FanModeSetting.Auto;
-            expect(req.toBuffer()).toEqual(Buffer.from([FanModeSetting.Auto, 0, 0]));
+            // setpoints left undefined
+            expect(() => req.toBuffer()).toThrow();
         });
 
         it("clamps out-of-range wire indices when parsing (never undefined)", () => {
@@ -417,11 +416,23 @@ describe("Scheduling domainx", () => {
             expect(buf.slice(5)).toEqual(Buffer.from([0, 0, 0, 0, 0]));
         });
 
-        it("Away hold writes type only; other fields Null", () => {
-            const req = buildScheduleHoldRequest(HOLD_UI.Away);
-            expect(req.toBuffer()).toEqual(Buffer.from([
-                HoldType.Away, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ]));
+        it("Away payload includes required fan + heat/cool fields", () => {
+            const req = buildScheduleHoldRequest(HOLD_UI.Away, {
+                fan: FanModeSetting.Auto,
+                heatSetpoint: 17,
+                coolSetpoint: 28.5,
+                dehumidifierSetpoint: 45,
+            });
+            const buf = req.toBuffer();
+
+            expect(Array.from(buf)).toEqual([
+                HoldType.Away,
+                FanModeSetting.Auto,
+                guideEncodeTemperature(17),
+                guideEncodeTemperature(28.5),
+                45,
+                0, 0, 0, 0, 0, // no end date for Away
+            ]);
         });
 
         it("Vacation payload includes setpoints and end date fields", () => {

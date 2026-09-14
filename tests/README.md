@@ -25,7 +25,7 @@ npm run test:watch
 | `best-practices-bootstrap.test.ts` | Connect checklist |
 | `tcp-frame-reassembly.test.ts` | Stream framing, partial/batched frames, per-pass cap |
 | `nack-retry-queue.test.ts` | Sequence allocation, NACK retry policy, transport gating, reconnect requeue |
-| `connection-supervisor.test.ts` | Reconnect backoff, connect timeout |
+| `connection-supervisor.test.ts` | Reconnect backoff, connect timeout, liveness probe |
 | `native-ids.test.ts` | Child nativeId suffixes and MAC recovery |
 | `hold-sync-echo-guard.test.ts` | Away/Vacation hold-sync echo suppression |
 

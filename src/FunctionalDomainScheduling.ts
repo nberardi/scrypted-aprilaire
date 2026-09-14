@@ -61,8 +61,17 @@ export class ScheduleHoldRequest extends BasePayloadRequest {
 }
 
 /**
- * Schedule Hold read/COS (§3.4). Null (0) sub-fields become `undefined`
- * so a round-trip write stays Null. Day/month 0 means no end date.
+ * Schedule Hold read/COS (§3.4).
+ *
+ * Every field except the hold type may arrive as Null (0): Disabled, Permanent
+ * and Away holds carry no end date, and setpoints are Null when the hold does
+ * not override them. Null fields are surfaced as `undefined` so they round-trip
+ * back to Null on a write.
+ *
+ * Decoding Null date bytes as a calendar date produced `new Date(2000, -1, 0)` —
+ * 31 Dec 1999 — which the plugin's multi-thermostat hold sync then re-encoded as
+ * day 31 / month 12 / year byte 255, broadcasting a wire-invalid end date to
+ * every peer thermostat.
  */
 export class ScheduleHoldResponse extends BasePayloadResponse {
     hold: HoldType = HoldType.Disabled;
@@ -317,8 +326,19 @@ export class AwaySettingsRequest extends BasePayloadRequest {
     }
 
     toBuffer(): Buffer {
-        const payload = Buffer.alloc(3);
+        if (!Number.isFinite(this.heatSetpoint) || this.heatSetpoint < 15.5 || this.heatSetpoint > 18.5) {
+            throw new Error("Heat setpoint must be between 15.5 and 18.5");
+        }
+
+        if (!Number.isFinite(this.coolSetpoint) || this.coolSetpoint < 26.5 || this.coolSetpoint > 29.5) {
+            throw new Error("Cool setpoint must be between 26.5 and 29.5");
+        }
+
+        let payload = Buffer.alloc(3);
         payload.writeUint8(this.fan, 0);
+        // The wire encodes only the 6 indexed values; valid-range inputs can
+        // fall off the 0.5° grid (e.g. unit-converted UI values), so snap to
+        // the nearest table entry instead of an exact-key lookup.
         payload.writeUint8(nearestAwayIndex(AWAY_HEAT_SETPOINTS_C, this.heatSetpoint), 1);
         payload.writeUint8(nearestAwayIndex(AWAY_COOL_SETPOINTS_C, this.coolSetpoint), 2);
         return payload;

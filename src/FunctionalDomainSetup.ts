@@ -46,7 +46,22 @@ export class ScaleResponse extends BasePayloadResponse {
 }
 
 /**
- * Setup §1.4 Date and Time — 7 bytes, local wall clock (not UTC). Refresh at least monthly.
+ * Setup §1.4 Date and Time (attribute 0x04) — write/read.
+ *
+ * Payload layout (7 data bytes per guide):
+ *   Byte 0: Second     (0–59)
+ *   Byte 1: Minute     (0–59)
+ *   Byte 2: Hour       (0–23, 24-hour)
+ *   Byte 3: Date       (1–31, day of month)
+ *   Byte 4: Day        (0=Sunday … 6=Saturday; matches JS Date.getDay())
+ *   Byte 5: Month      (1–12)
+ *   Byte 6: Year−2000  (0–99 → calendar year 2000–2099)
+ *
+ * Timezone assumption: encode **local wall-clock time** of the host
+ * (`Date#getHours`, `getDate`, …), **not** UTC. Thermostat schedules and
+ * on-device display are local; writing UTC would shift schedule events by
+ * the host UTC offset. Automation owns the thermostat clock (guide §J.3)
+ * and should refresh at least monthly so onboard schedule events do not drift.
  */
 export class DateAndTimeRequest extends BasePayloadRequest {
     second: number;
@@ -145,8 +160,27 @@ export class ThermostatInstallerSettingsRequest extends BasePayloadRequest {
 }
 
 /**
- * Setup §1.1 installer settings — fields the plugin actually uses.
- * Offsets: scale 2, auto 12, deadband 13, outdoor 15, away 26, heat blast 27–28, reminders 34/41/42.
+ * Setup §1.1 Thermostat Installer Settings — bootstrap fields used by the plugin.
+ *
+ * Byte map (0-based indices into the attribute payload; guide field numbers in
+ * parentheses). Source: Aprilaire WiFi Thermostat Protocol guide v1.00 §1.1.
+ * Also cross-checked against pyaprilaire (AWAY_AVAILABLE at index 26).
+ *
+ * | Offset | Field                         | Values / notes |
+ * |--------|-------------------------------|----------------|
+ * | 2      | scale (#2)                    | 0=F, 1=C (existing) |
+ * | 12     | autoChangeover (#12)          | 0=Disabled, 1=Enabled |
+ * | 13     | deadband (#13)                | 0–7 → 2F/1C … 9F/4.5C; ignore if auto off |
+ * | 15     | outdoorSensor (#15)           | 0=NotInstalled, 1=Installed, 2=Automation (existing) |
+ * | 26     | awayEnabled (#26)             | 0=Disabled, 1=Enabled (pyaprilaire AWAY_AVAILABLE) |
+ * | 27     | heatBlastEnabled (#27)        | 0=Disabled, 1=Enabled |
+ * | 28     | heatBlastOffset (#28)         | 0=3F/1.5C, 1=4F/2C, 2=5F/2.5C |
+ * | 34     | hvacServiceReminderMonths (#43) | 0=Null, 1–12=months, 13=Off |
+ * | 41     | airFilterServiceReminderMonths (#54, 8476) | 1–12=months, 13=Off |
+ * | 42     | waterPanelServiceReminderMonths (#55, 8476) | 1–12=months, 13=Off |
+ *
+ * Payload is typically ~44–56 bytes. Fields beyond `payload.length` are left at
+ * safe defaults (disabled / 0). Do not invent offsets not listed above.
  */
 export class ThermostatInstallerSettingsResponse extends BasePayloadResponse {
     /** Byte 2 — Temperature Scale (#2). */

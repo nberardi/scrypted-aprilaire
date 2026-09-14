@@ -1,9 +1,10 @@
-import sdk, { Device, DeviceCreator, DeviceCreatorSettings, ScryptedDeviceType, ScryptedInterface, SettingValue, TemperatureUnit } from '@scrypted/sdk';
+import sdk, { Device, DeviceBase, DeviceCreator, DeviceCreatorSettings, ScryptedDevice, ScryptedDeviceType, ScryptedInterface, SettingValue, TemperatureUnit, Thermometer } from '@scrypted/sdk';
 import { DeviceProvider, ScryptedDeviceBase, Setting, Settings } from '@scrypted/sdk';
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { AprilaireClient } from './AprilaireClient';
 import { BasePayloadResponse } from "./BasePayloadResponse";
 import {
+    ControllingSensorsStatusAndValueRequest,
     ControllingSensorsStatusAndValueResponse,
     HumiditySensorStatus,
     SensorValuesRequest,
@@ -12,7 +13,7 @@ import {
     WrittenOutdoorTemperatureValueRequest,
     clampWrittenOdtIntervalMinutes,
 } from './FunctionalDomainSensors';
-import { ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
+import { ThermostatInstallerSettingsRequest, ThermostatInstallerSettingsResponse, OutdoorSensorStatus } from './FunctionalDomainSetup';
 import { HoldType, ScheduleHoldRequest, ScheduleHoldResponse, scheduleHoldFingerprint } from './FunctionalDomainScheduling';
 import { SyncRequest } from './FunctionalDomainStatus';
 import { setInterval } from 'node:timers';
@@ -122,8 +123,6 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     private sensorCleanupAttempted = new Set<string>();
     /** Holds we wrote for multi-stat sync — ignore matching COS so we do not echo. */
     private holdSyncEchoes = new HoldSyncEchoGuard();
-    /** Last physical outdoor °C — rewritten on the ODT interval without re-polling §5.2. */
-    private lastPhysicalOutdoorC?: number;
 
     constructor(nativeId?: string) {
         super(nativeId);
@@ -228,21 +227,19 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     }
 
     private async refreshOutdoorSensors() {
+        // Always refresh Sensor Values so aux sensors update even when outdoor sync is off.
+        this.pollSensorValues();
+
         if (this.storageSettings.values.syncOutdoorSensor === false)
             return;
-        if (this.lastPhysicalOutdoorC === undefined)
-            return;
-        this.writeOutdoorToAutomation(this.lastPhysicalOutdoorC);
-    }
 
-    private writeOutdoorToAutomation(temperature: number, exceptMac?: string): void {
-        for (const mac of this.automatedOutdoorSensors) {
-            if (mac === exceptMac)
-                continue;
-            const request = new WrittenOutdoorTemperatureValueRequest();
-            request.temperature = temperature;
-            this.clients.get(mac)?.write(request);
-        }
+        this.clients.forEach((client) => {
+            if (this.automatedOutdoorSensors.indexOf(client.mac) >= 0)
+                return;
+
+            // Controlling sensors for multi-stat ODT sync source values.
+            client.read(new ControllingSensorsStatusAndValueRequest());
+        });
     }
 
     private responseReceived(response: BasePayloadResponse, responseClient: AprilaireClient) {
@@ -265,15 +262,11 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
 
             const request = new ScheduleHoldRequest();
             request.hold = response.hold;
-            // Away: hold type only — peers apply their own Away Settings (other fields Null).
-            // Vacation: copy fan/setpoints/end date onto the wire.
-            if (response.hold === HoldType.Vacation) {
-                request.fan = response.fan;
-                request.heatSetpoint = response.heatSetpoint;
-                request.coolSetpoint = response.coolSetpoint;
-                request.dehumidifierSetpoint = response.dehumidifierSetpoint;
-                request.endDate = response.endDate;
-            }
+            request.fan = response.fan;
+            request.heatSetpoint = response.heatSetpoint;
+            request.coolSetpoint = response.coolSetpoint;
+            request.dehumidifierSetpoint = response.dehumidifierSetpoint;
+            request.endDate = response.endDate;
 
             this.clients.forEach((client) => {
                 if (client.mac === responseClient.mac)
@@ -336,8 +329,8 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         responseClient: AprilaireClient
     ): Promise<void> {
         if (response.outdoorTemperatureStatus === TemperatureSensorStatus.NoError) {
+            // Child Outdoor device only for physically installed ODT (not Automation receivers).
             if (this.hasPhysicalOutdoorSensor(responseClient.mac)) {
-                this.lastPhysicalOutdoorC = response.outdoorTemperature;
                 await this.updateOutdoorSensor(
                     responseClient,
                     response.outdoorTemperature,
@@ -345,10 +338,21 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                         ? response.outdoorHumidity
                         : undefined
                 );
+            }
 
-                if (this.storageSettings.values.syncOutdoorSensor) {
-                    this.writeOutdoorToAutomation(response.outdoorTemperature, responseClient.mac);
-                }
+            // Sync writers: physical sources push ODT to Automation thermostats.
+            if (
+                this.storageSettings.values.syncOutdoorSensor &&
+                this.hasPhysicalOutdoorSensor(responseClient.mac)
+            ) {
+                this.automatedOutdoorSensors
+                    .filter((mac) => mac !== responseClient.mac)
+                    .forEach((mac) => {
+                        const request = new WrittenOutdoorTemperatureValueRequest();
+                        request.temperature = response.outdoorTemperature;
+                        const client = this.clients.get(mac);
+                        client?.write(request);
+                    });
             }
         }
     }
@@ -357,17 +361,16 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         response: SensorValuesResponse,
         responseClient: AprilaireClient
     ): Promise<void> {
-        const nativeId = responseClient.mac;
-
         this.console.info(
-            `[${nativeId}] Sensor Values: ` +
+            `[${responseClient.mac}] Sensor Values: ` +
             `RAT status=${response.returningAirTemperatureStatus} val=${response.returningAirTemperature}°C, ` +
             `LAT status=${response.leavingAirTemperatureStatus} val=${response.leavingAirTemperature}°C, ` +
             `remote status=${response.indoorWiredRemoteTemperatureStatus} val=${response.indoorWiredRemoteTemperature}°C, ` +
             `ODT status=${response.outdoorTemperatureStatus}/${response.outdoorWirelessTemperatureStatus} ` +
-            `mode=${this.outdoorSensorMode.get(nativeId) ?? "unknown"}`
+            `mode=${this.outdoorSensorMode.get(responseClient.mac) ?? "unknown"}`
         );
 
+        // Outdoor child device: physical install only (never Automation-fed mirrors).
         if (this.hasPhysicalOutdoorSensor(responseClient.mac)) {
             let outdoorTemp: number | undefined;
             let outdoorHumidity: number | undefined;
@@ -383,11 +386,11 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             }
 
             if (outdoorTemp !== undefined) {
-                this.lastPhysicalOutdoorC = outdoorTemp;
                 await this.updateOutdoorSensor(responseClient, outdoorTemp, outdoorHumidity);
             }
         }
 
+        // Aux probes: only when status is NoError (strict). NotInstalled / errors → remove if present.
         await this.maybeUpdateAuxFromStatus(
             responseClient,
             NATIVE_RAT,
@@ -420,6 +423,9 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     ): Promise<void> {
         const nativeId = responseClient.mac + suffix;
 
+        // Strict: only NoError means a real, healthy probe is reporting.
+        // Earlier we treated any status ≠ NotInstalled as present, which created
+        // ghost RAT/LAT/Remote devices on stats that don't have those probes.
         if (!isTemperatureSensorOk(status)) {
             if (this.auxSensors.has(nativeId)) {
                 await this.removeAuxSensor(
@@ -427,6 +433,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                     `${nameSuffix.trim()} status=${status} (${TemperatureSensorStatus[status] ?? status})`
                 );
             } else if (!this.sensorCleanupAttempted.has(nativeId)) {
+                // One-shot purge of ghosts left by older plugin builds.
                 this.sensorCleanupAttempted.add(nativeId);
                 try {
                     await deviceManager.onDeviceRemoved(nativeId);
@@ -573,6 +580,11 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         sensor.setTemperatureUnit(TemperatureUnit.C);
     }
 
+    /** @deprecated use updateOutdoorSensor — kept for call-site compatibility */
+    async setOutdoorTemperature(response: ControllingSensorsStatusAndValueResponse, responseClient: AprilaireClient): Promise<void> {
+        await this.handleControllingSensors(response, responseClient);
+    }
+
     getSettings(): Promise<Setting[]> {
         return this.storageSettings.getSettings();
     }
@@ -588,10 +600,14 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
 
         if (nativeId.endsWith(NATIVE_OUTDOOR)) {
             const mac = thermostatMacFromNativeId(nativeId);
+            if (!this.outdoorSensors.has(mac))
+                this.outdoorSensors.set(mac, new AprilaireOutdoorThermometer(nativeId));
             return this.outdoorSensors.get(mac);
         }
 
         if (isAuxTemperatureNativeId(nativeId)) {
+            if (!this.auxSensors.has(nativeId))
+                this.auxSensors.set(nativeId, new AprilaireAuxThermometer(nativeId));
             return this.auxSensors.get(nativeId);
         }
 
@@ -643,7 +659,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             interfaces: string[],
             device?: { name?: string; id?: string }
         ) => {
-            // 1) Device state (what Scrypted UI reads)
+            // 1) Device state (what Scrypted UI reads for the current name)
             if (device) {
                 try {
                     device.name = name;
@@ -651,6 +667,15 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                     this.console.warn(`[${nativeId}] device.name set failed: ${e}`);
                 }
             }
+            // 2) Direct device-state write (belt and suspenders)
+            try {
+                const state = deviceManager.getDeviceState(nativeId);
+                if (state)
+                    state.name = name;
+            } catch (e) {
+                this.console.warn(`[${nativeId}] getDeviceState name set failed: ${e}`);
+            }
+            // 3) Refresh discovery metadata (interfaces/info); name alone is not enough)
             await deviceManager.onDeviceDiscovered({
                 providerNativeId: this.nativeId,
                 nativeId,
@@ -836,6 +861,10 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
     private async publishDevices(client: AprilaireClient, host: string, port: number): Promise<AprilaireDiscoveryResult> {
         const self = this;
 
+        const devices: Device[] = [];
+
+        // If name already settled (including real names learned during the grace wait),
+        // use it; otherwise temporary fallback until settleName/emit renames.
         const d: Device = {
             providerNativeId: self.nativeId,
             name: client.name,
@@ -867,6 +896,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         }
 
         await deviceManager.onDeviceDiscovered(d);
+        devices.push(d);
 
         self.clients.set(d.nativeId, client);
 
@@ -892,6 +922,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             dh.type = ScryptedDeviceType.Fan;
 
             await deviceManager.onDeviceDiscovered(dh);
+            devices.push(dh);
 
             hum = new AprilaireHumidifier(dh.nativeId, client);
             self.thermostats.set(dh.nativeId, hum);
@@ -914,6 +945,7 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
             dh.type = ScryptedDeviceType.Fan;
 
             await deviceManager.onDeviceDiscovered(dh);
+            devices.push(dh);
 
             deHum = new AprilaireDehumidifier(dh.nativeId, client);
             self.thermostats.set(dh.nativeId, deHum);
@@ -930,9 +962,34 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
         return { nativeId: d.nativeId, device: d, thermostat: t, humidifier: hum, dehumidifier: deHum };
     }
 
+    /**
+     * Connect-time sync per the guide's Best Practices checklist. Re-run on every
+     * reconnect: COS subscriptions and the Sync dump are per-session, so a
+     * reconnected thermostat that only re-identifies would leave the plugin
+     * holding pre-outage state.
+     */
     private bootstrapThermostat(client: AprilaireClient): void {
+        const self = this;
+
+        // Explicit Setup/1 read for deadband / Away / Heat Blast gates (also COS-subscribed).
+        client.read(new ThermostatInstallerSettingsRequest());
+        // Full §5.1 sensor array (COS=No — must ReadRequest; return/supply air, wireless outdoor).
         client.read(new SensorValuesRequest());
+        // Sync dumps current state for all COS-subscribed attributes (includes Setup/1).
         client.write(new SyncRequest());
+        // Re-read Sensor Values + name shortly after connect in case replies are lost
+        // behind the identification/COS/sync burst.
+        setTimeout(() => {
+            if (!client.mac)
+                return;
+            client.read(new SensorValuesRequest());
+            client.requestThermostatName();
+        }, 3000).unref?.();
+        // Late name recovery: re-apply whatever we have after the grace/re-read window.
+        setTimeout(() => {
+            if (client.mac)
+                void self.applyClientDisplayName(client);
+        }, 5000).unref?.();
     }
 
     async createDevice(settings: DeviceCreatorSettings): Promise<string> {
@@ -950,14 +1007,14 @@ export class AprilairePlugin extends ScryptedDeviceBase implements DeviceProvide
                 title: "IP Address",
                 type: "string",
                 placeholder: "192.168.1.XX",
-                description: "The IP Address of the thermostat on your local network."
+                description: "The IP Address of the fan on your local network."
             },
             {
                 key: 'port',
                 title: "Port",
                 type: "number",
                 placeholder: "8000",
-                description: "Typically 8000 for 8800 series, 7000 for 6000 series."
+                description: "The port the termostat uses to communicate, typically 8000 for 8800 series, and 7000 for 6000 series thermostats."
             }
         ];
     }

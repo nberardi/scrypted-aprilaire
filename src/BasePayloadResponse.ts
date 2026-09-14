@@ -17,7 +17,16 @@ export class BasePayloadResponse {
         this.attribute = attribute;
     }
 
-    /** Flag truncated/empty payloads instead of throwing from a subclass constructor. */
+    /**
+     * Guard fixed-length parsers against truncated payloads.
+     *
+     * A subclass that reads past the end of its buffer throws `ERR_OUT_OF_RANGE`
+     * from its own constructor, which loses the whole frame and tells callers
+     * nothing. Flagging {@link ResponseErrorType.PayloadMalformed} instead keeps a
+     * usable object: consumers already gate on `responseError`.
+     *
+     * @returns true when the payload is long enough to parse.
+     */
     protected hasRequiredLength(requiredBytes: number): boolean {
         if (!this.payload || this.payload.length === 0) {
             this.responseError = ResponseErrorType.NoPayloadReceived;
@@ -35,7 +44,9 @@ export class BasePayloadResponse {
 
 /**
  * NACK is Action + StatusCode only (no functional domain / attribute).
- * Retry: 0x01, 0x03, 0x09 — twice, 0.5–1s. All other codes clear.
+ * Retry policy (OutboundRequestQueue / Guide §H.5):
+ *   0x01, 0x03, 0x09 → retry up to 2 additional times with 0.5–1s delay
+ *   all other codes → clear the transaction
  */
 export class NackResponse extends BasePayloadResponse {
     statusCode: NAckError | number;

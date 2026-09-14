@@ -1,6 +1,14 @@
 /**
- * Outbound queue with NACK retry: host SEQ 0–127, same-frame retries for
- * 0x01 / 0x03 / 0x09 (2 extra tries, 0.5s), other NACKs clear the transaction.
+ * Outbound request queue with NACK-driven retry (Guide §H.5).
+ *
+ * - Tracks each outbound write/read with an HA sequence number (0–127)
+ * - On retryable NACK (0x01 Generic, 0x03 Busy, 0x09 Timeout): re-sends the
+ *   same frame with the same sequence up to 2 additional times after a delay
+ * - On non-retryable NACK or exhausted attempts: clears the transaction and
+ *   notifies the caller
+ * - Sequence advances only when starting a new command, never on retry
+ * - Holds commands while the transport reports it cannot send, so frames are
+ *   never handed to a socket that is still connecting or already destroyed
  */
 
 import { NackResponse } from "./BasePayloadResponse";
@@ -53,7 +61,10 @@ export interface OutboundRequestQueueOptions {
     canSend?: () => boolean;
 }
 
-/** Retryable NACK codes: 0x01 Generic, 0x03 Busy, 0x09 Timeout. */
+/**
+ * Pure retry classification matching NackResponse.shouldRetry / Guide §H.5.
+ * Retryable: 0x01 Generic, 0x03 Busy, 0x09 Timeout.
+ */
 export function isRetryableNack(statusCode: number): boolean {
     return new NackResponse(statusCode).shouldRetry;
 }
@@ -85,6 +96,7 @@ export class OutboundRequestQueue {
         this.retryDelayMs = options.retryDelayMs ?? NACK_RETRY_DELAY_MS;
         this.onPermanentNack = options.onPermanentNack;
         this.canSend = options.canSend ?? (() => true);
+        // Cover full retry budget plus a small grace window for late NACKs.
         this.idleTtlMs = this.maxAttempts * this.retryDelayMs + 2000;
     }
 
@@ -135,8 +147,16 @@ export class OutboundRequestQueue {
      */
     handleNack(statusCode: number, sequence: number): void {
         const entry = this.inFlight.get(sequence);
-        if (!entry)
+        if (!entry) {
+            // Unknown sequence: surface as permanent so callers still observe status
+            this.onPermanentNack?.({
+                statusCode,
+                sequence,
+                request: { action: 0, domain: 0, attribute: 0, data: Buffer.alloc(0) },
+                attempts: 0,
+            });
             return;
+        }
 
         if (isRetryableNack(statusCode) && entry.attempts < this.maxAttempts) {
             this.scheduleRetry(entry);

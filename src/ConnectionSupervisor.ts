@@ -1,28 +1,56 @@
 /**
- * Reconnect supervision for the single long-lived Aprilaire TCP session.
+ * Connection supervision for the single long-lived Aprilaire TCP session.
  *
- * A healthy link can be silent (COS + Sync, not polling). This class only
- * reconnects dropped sockets with exponential backoff and abandons connect
- * attempts that never become ready. Half-open sockets are left to TCP keepalive.
+ * The guide's design rule is "prefer COS + Sync over continuous polling"
+ * (Protocol Overview, design rule 1), which means a healthy link can be silent
+ * for long stretches. That makes two failure modes invisible without explicit
+ * supervision:
+ *
+ * 1. A dropped connection is never re-established, so the plugin goes quiet
+ *    until something happens to issue a read.
+ * 2. A half-open socket (thermostat power-cycled, NAT/firewall idle eviction)
+ *    still reports `connected`, so writes vanish and devices stay "online".
+ *
+ * This class owns both policies and is deliberately free of `net` and timer
+ * globals: callers inject `schedule`, `now`, and `random` so the behavior is
+ * unit-testable without hardware or wall-clock waits.
+ *
+ * Reconnect uses exponential backoff with jitter, reset on every successful
+ * connect. Liveness uses a probe rather than a blind idle timeout: after a
+ * quiet period, send a cheap read and only declare the link dead if nothing at
+ * all arrives before {@link ConnectionSupervisorOptions.probeTimeoutMs}.
  */
 
 export type CancelTimer = () => void;
 export type SupervisorScheduler = (callback: () => void, delayMs: number) => CancelTimer;
 
 export interface ConnectionSupervisorOptions {
+    /** Delay before the first reconnect attempt. */
     initialDelayMs?: number;
+    /** Ceiling for the exponentially growing reconnect delay. */
     maxDelayMs?: number;
+    /** Multiplier applied per consecutive failed attempt. */
     factor?: number;
-    /** Fractional jitter (0 = none, 0.2 = ±20%). */
+    /** Fractional jitter applied to each delay (0 = none, 0.2 = ±20%). */
     jitterRatio?: number;
+    /** How long a connect attempt may stay pending before it is abandoned. */
     connectTimeoutMs?: number;
+    /** Quiet period on an established link before a liveness probe is sent. */
+    probeAfterMs?: number;
+    /** Grace period for any inbound traffic after a probe before dropping the link. */
+    probeTimeoutMs?: number;
     schedule?: SupervisorScheduler;
     now?: () => number;
+    /** Uniform random source in [0, 1); injected for deterministic tests. */
     random?: () => number;
 }
 
 export interface ConnectionSupervisorHooks {
+    /** Open a fresh socket. Must eventually lead to notifyConnected or notifyDisconnected. */
     connect: () => void;
+    /** Send a cheap read used only to prove the link still carries traffic. */
+    probe: () => void;
+    /** Tear down the current socket; expected to surface as notifyDisconnected. */
     drop: (reason: string) => void;
     log?: (message: string) => void;
 }
@@ -32,6 +60,8 @@ export const DEFAULT_MAX_DELAY_MS = 60_000;
 export const DEFAULT_FACTOR = 2;
 export const DEFAULT_JITTER_RATIO = 0.2;
 export const DEFAULT_CONNECT_TIMEOUT_MS = 20_000;
+export const DEFAULT_PROBE_AFTER_MS = 5 * 60_000;
+export const DEFAULT_PROBE_TIMEOUT_MS = 20_000;
 
 export interface BackoffParameters {
     initialDelayMs: number;
@@ -41,8 +71,12 @@ export interface BackoffParameters {
 }
 
 /**
- * Delay for a zero-based consecutive-failure count:
- * `min(max, initial * factor^attempt)` then ±jitter. `random() === 0.5` is unjittered.
+ * Delay for a zero-based consecutive-failure count.
+ *
+ * The un-jittered series is `initial * factor^attempt` capped at `maxDelayMs`;
+ * jitter then spreads it by `±jitterRatio` so several thermostats recovering
+ * from the same outage do not reconnect in lockstep. `random() === 0.5` yields
+ * exactly the un-jittered value.
  */
 export function computeBackoffDelay(
     attempt: number,
@@ -65,15 +99,22 @@ function defaultScheduler(callback: () => void, delayMs: number): CancelTimer {
 export class ConnectionSupervisor {
     private readonly backoff: BackoffParameters;
     private readonly connectTimeoutMs: number;
+    private readonly probeAfterMs: number;
+    private readonly probeTimeoutMs: number;
     private readonly schedule: SupervisorScheduler;
+    private readonly now: () => number;
     private readonly random: () => number;
 
     private supervising = false;
     private linkUp = false;
+    /** Consecutive failed attempts; drives the backoff exponent. */
     private attempt = 0;
+    private lastActivityMs = 0;
 
     private cancelReconnect?: CancelTimer;
     private cancelConnectTimeout?: CancelTimer;
+    private cancelProbeDue?: CancelTimer;
+    private cancelProbeTimeout?: CancelTimer;
 
     constructor(
         private readonly hooks: ConnectionSupervisorHooks,
@@ -86,7 +127,10 @@ export class ConnectionSupervisor {
             jitterRatio: options.jitterRatio ?? DEFAULT_JITTER_RATIO,
         };
         this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+        this.probeAfterMs = options.probeAfterMs ?? DEFAULT_PROBE_AFTER_MS;
+        this.probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
         this.schedule = options.schedule ?? defaultScheduler;
+        this.now = options.now ?? Date.now;
         this.random = options.random ?? Math.random;
     }
 
@@ -98,6 +142,7 @@ export class ConnectionSupervisor {
         return this.linkUp;
     }
 
+    /** Consecutive failed connect attempts since the last successful connect. */
     get attempts(): number {
         return this.attempt;
     }
@@ -106,6 +151,11 @@ export class ConnectionSupervisor {
         return this.cancelReconnect !== undefined;
     }
 
+    get isProbePending(): boolean {
+        return this.cancelProbeTimeout !== undefined;
+    }
+
+    /** Begin supervising and open the first connection immediately. */
     start(): void {
         if (this.supervising)
             return;
@@ -115,23 +165,30 @@ export class ConnectionSupervisor {
         this.beginConnect();
     }
 
+    /** Stop supervising (intentional shutdown). Cancels every pending timer. */
     stop(): void {
         this.supervising = false;
         this.linkUp = false;
         this.clearReconnect();
         this.clearConnectTimeout();
+        this.clearProbeTimers();
     }
 
+    /** The socket reported a usable connection. */
     notifyConnected(): void {
         this.clearConnectTimeout();
         this.clearReconnect();
         this.attempt = 0;
         this.linkUp = true;
+        this.lastActivityMs = this.now();
+        this.armProbeDue(this.probeAfterMs);
     }
 
+    /** The socket closed, failed, or was torn down. */
     notifyDisconnected(reason?: string): void {
         this.linkUp = false;
         this.clearConnectTimeout();
+        this.clearProbeTimers();
 
         if (!this.supervising)
             return;
@@ -151,6 +208,22 @@ export class ConnectionSupervisor {
         }, delayMs);
     }
 
+    /**
+     * Any inbound frame. Resets the quiet-period clock and, when a probe is
+     * outstanding, confirms the link is alive.
+     */
+    notifyActivity(): void {
+        this.lastActivityMs = this.now();
+
+        if (this.cancelProbeTimeout) {
+            this.clearProbeTimeout();
+            this.hooks.log?.("liveness probe answered");
+        }
+
+        if (this.linkUp)
+            this.armProbeDue(this.probeAfterMs);
+    }
+
     private beginConnect(): void {
         this.clearConnectTimeout();
         this.cancelConnectTimeout = this.schedule(() => {
@@ -163,6 +236,37 @@ export class ConnectionSupervisor {
         this.hooks.connect();
     }
 
+    private armProbeDue(delayMs: number): void {
+        this.clearProbeDue();
+        this.cancelProbeDue = this.schedule(() => {
+            this.cancelProbeDue = undefined;
+            this.onProbeDue();
+        }, delayMs);
+    }
+
+    private onProbeDue(): void {
+        if (!this.supervising || !this.linkUp)
+            return;
+
+        // Traffic arrived while the timer was pending — re-arm for the remainder.
+        const quietForMs = this.now() - this.lastActivityMs;
+        if (quietForMs < this.probeAfterMs) {
+            this.armProbeDue(this.probeAfterMs - quietForMs);
+            return;
+        }
+
+        this.hooks.log?.(`link quiet for ${quietForMs}ms; sending liveness probe`);
+        this.hooks.probe();
+
+        this.clearProbeTimeout();
+        this.cancelProbeTimeout = this.schedule(() => {
+            this.cancelProbeTimeout = undefined;
+            if (!this.supervising || !this.linkUp)
+                return;
+            this.hooks.drop(`no reply to liveness probe within ${this.probeTimeoutMs}ms`);
+        }, this.probeTimeoutMs);
+    }
+
     private clearReconnect(): void {
         this.cancelReconnect?.();
         this.cancelReconnect = undefined;
@@ -171,5 +275,20 @@ export class ConnectionSupervisor {
     private clearConnectTimeout(): void {
         this.cancelConnectTimeout?.();
         this.cancelConnectTimeout = undefined;
+    }
+
+    private clearProbeDue(): void {
+        this.cancelProbeDue?.();
+        this.cancelProbeDue = undefined;
+    }
+
+    private clearProbeTimeout(): void {
+        this.cancelProbeTimeout?.();
+        this.cancelProbeTimeout = undefined;
+    }
+
+    private clearProbeTimers(): void {
+        this.clearProbeDue();
+        this.clearProbeTimeout();
     }
 }
