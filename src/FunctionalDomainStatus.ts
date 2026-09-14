@@ -63,6 +63,7 @@ export type CosSubscriptionOverrides = Partial<Record<CosSubscriptionIndex, bool
 /**
  * Default COS subscription vector used by the plugin at connect.
  * Must stay aligned with P1 runtime needs (installer, setpoints, hold, sensors, status).
+ * Fresh air / air cleaning stay subscribed for future implementation.
  */
 export function defaultCosSubscriptionFlags(): number[] {
     const flags = new Array<number>(COS_SUBSCRIPTION_BYTE_COUNT).fill(0);
@@ -137,9 +138,12 @@ export class CosResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Status, FunctionalDomainStatus.COS);
 
-        this.subscriptions = [];
+        this.subscriptions = new Array<boolean>(COS_SUBSCRIPTION_BYTE_COUNT).fill(false);
+        if (!this.hasRequiredLength(COS_SUBSCRIPTION_BYTE_COUNT))
+            return;
+
         for (let i = 0; i < COS_SUBSCRIPTION_BYTE_COUNT; i++) {
-            this.subscriptions.push(i < payload.length ? payload.readUint8(i) === 1 : false);
+            this.subscriptions[i] = payload.readUint8(i) === 1;
         }
     }
 

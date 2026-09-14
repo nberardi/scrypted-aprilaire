@@ -906,6 +906,12 @@ export function reassembleFrames(buffer: Buffer, maxFrames: number = MAX_FRAMES_
         // NACK CNT=2 → [Action][StatusCode], no domain/attribute.
         // Byte layout: REV SEQ CNT_H CNT_L ACTION STATUS CRC
         if (action === Action.NAck) {
+            if (length < 2) {
+                crcFailures++;
+                workingData = workingData.subarray(frameSize);
+                count++;
+                continue;
+            }
             const statusCode = workingData.readUint8(5);
             frames.push({
                 revision,
@@ -1314,8 +1320,8 @@ class AprilaireSocket extends EventEmitter {
             this.emit('disconnected', reason);
     }
 
-    readObjectRequest(request: BasePayloadRequest) { 
-        this.sendCommand(Action.ReadRequest, request.domain, request.attribute);
+    readObjectRequest(request: BasePayloadRequest) {
+        this.sendCommand(Action.ReadRequest, request.domain, request.attribute, request.toBuffer());
     }
 
     writeObjectRequest(request: BasePayloadRequest) {

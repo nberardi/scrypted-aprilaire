@@ -130,7 +130,7 @@ describe("Control domainx", () => {
             expect(on.attribute).toBe(GuideAttribute.Control.DehumidificationSetpoint);
         });
 
-        it("parses response: 0 = off, non-zero = on with setpoint", () => {
+        it("parses response: 0 = off, 40–90 = on with setpoint", () => {
             const off = new DehumidificationSetpointResponse(Buffer.from([0]));
             expect(off.on).toBe(false);
             expect(off.dehumidificationSetpoint).toBe(0);
@@ -138,6 +138,9 @@ describe("Control domainx", () => {
             const on = new DehumidificationSetpointResponse(Buffer.from([50]));
             expect(on.on).toBe(true);
             expect(on.dehumidificationSetpoint).toBe(50);
+
+            const reserved = new DehumidificationSetpointResponse(Buffer.from([10]));
+            expect(reserved.on).toBe(false);
         });
     });
 

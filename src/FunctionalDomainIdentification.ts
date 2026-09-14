@@ -45,6 +45,9 @@ export class MacAddressResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Identification, FunctionalDomainIdentification.MacAddress);
 
+        if (!this.hasRequiredLength(8))
+            return;
+
         const macAddressBytes = payload.subarray(0, 6);
         this.macAddress = macAddressBytes.toString("hex");
 
@@ -74,6 +77,9 @@ export class RevisionAndModelResponse extends BasePayloadResponse {
     gainspanFirmwareMinor: number;
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Identification, FunctionalDomainIdentification.RevisionAndModel);
+
+        if (!this.hasRequiredLength(7))
+            return;
 
         this.hardware = String.fromCharCode(payload.readUint8(0));
         this.firmwareMajor = payload.readUint8(1);

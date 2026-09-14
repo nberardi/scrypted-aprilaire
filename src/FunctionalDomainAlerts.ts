@@ -1,4 +1,4 @@
-import { FunctionalDomain, convertTemperatureToByte, FunctionalDomainScheduling, convertByteToTemperature, FunctionalDomainAlerts } from "./AprilaireClient";
+import { FunctionalDomain, FunctionalDomainAlerts } from "./AprilaireClient";
 import { BasePayloadRequest } from "./BasePayloadRequest";
 import { BasePayloadResponse } from "./BasePayloadResponse";
 

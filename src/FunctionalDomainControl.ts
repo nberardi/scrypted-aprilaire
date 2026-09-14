@@ -14,8 +14,8 @@ import { DEFAULT_DEADBAND_C } from "./FunctionalDomainSetup";
 * Increment Setpoint                        |   0x02    |   No  |   W   |   
 * Dehumidiification Setpoint                |   0x03    |   Yes |   R/W |   X
 * Humidification Setpoint                   |   0x04    |   Yes |   R/W |   X
-* Fresh Air Setting                         |   0x05    |   Yes |   R/W |   X
-* Air Cleaning Setting                      |   0x06    |   Yes |   R/W |   X
+* Fresh Air Setting                         |   0x05    |   Yes |   R/W |   parse
+* Air Cleaning Setting                      |   0x06    |   Yes |   R/W |   parse
 * Thermostat & IAQ Available                |   0x07    |   Yes |   R   |   X
 *
 */
@@ -98,8 +98,9 @@ export class ThermostatSetpointAndModeSettingsResponse extends BasePayloadRespon
 export class ThermostatSetpointAndModeSettingsRequest extends BasePayloadRequest {
     mode: ThermostatMode = ThermostatMode.Null;
     fan: FanModeSetting = FanModeSetting.Null;
-    heatSetpoint: number = 0;
-    coolSetpoint: number = 0;
+    /** Undefined / Null on the wire means do not modify. */
+    heatSetpoint?: number;
+    coolSetpoint?: number;
     constructor() {
         super(FunctionalDomain.Control, FunctionalDomainControl.ThermstateSetpointAndModeSettings);
     }
@@ -108,8 +109,18 @@ export class ThermostatSetpointAndModeSettingsRequest extends BasePayloadRequest
         let payload = Buffer.alloc(4);
         payload.writeUint8(this.mode ?? ThermostatMode.Null, 0);
         payload.writeUint8(this.fan ?? FanModeSetting.Null, 1);
-        payload.writeUint8(this.heatSetpoint ? convertTemperatureToByte(this.heatSetpoint) : 0, 2);
-        payload.writeUint8(this.coolSetpoint ? convertTemperatureToByte(this.coolSetpoint) : 0, 3);
+        payload.writeUint8(
+            this.heatSetpoint === undefined || this.heatSetpoint === null
+                ? 0
+                : convertTemperatureToByte(this.heatSetpoint),
+            2
+        );
+        payload.writeUint8(
+            this.coolSetpoint === undefined || this.coolSetpoint === null
+                ? 0
+                : convertTemperatureToByte(this.coolSetpoint),
+            3
+        );
         return payload;
     }
 }
@@ -260,8 +271,9 @@ export class DehumidificationSetpointResponse extends BasePayloadResponse {
         if (!this.hasRequiredLength(1))
             return;
 
-        this.on = payload.readUint8(0) !== 0;
-        this.dehumidificationSetpoint = payload.readUint8(0);
+        const value = payload.readUint8(0);
+        this.dehumidificationSetpoint = value;
+        this.on = value >= DEHUMIDIFICATION_SETPOINT_MIN && value <= DEHUMIDIFICATION_SETPOINT_MAX;
     }
 }
 

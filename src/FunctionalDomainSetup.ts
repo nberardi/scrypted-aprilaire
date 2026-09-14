@@ -38,6 +38,9 @@ export class ScaleResponse extends BasePayloadResponse {
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Setup, FunctionalDomainSetup.Scale);
 
+        if (!this.hasRequiredLength(1))
+            return;
+
         this.scale = payload.readUint8(0);
     }
 }
@@ -122,6 +125,9 @@ export class DateAndTimeResponse extends BasePayloadResponse {
 
     constructor(payload: Buffer) {
         super(payload, FunctionalDomain.Setup, FunctionalDomainSetup.DateAndTime);
+
+        if (!this.hasRequiredLength(7))
+            return;
 
         this.second = payload.readUint8(0);
         this.minute = payload.readUint8(1);

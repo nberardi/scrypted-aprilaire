@@ -11,6 +11,7 @@ src/
 tests/
 tools/
 .github/
+AGENTS.md
 CLAUDE.md
 Claude.md
 vitest.config.ts

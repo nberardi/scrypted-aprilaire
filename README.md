@@ -20,4 +20,4 @@ npm test          # protocol unit tests
 npm run build     # scrypted-webpack
 ```
 
-See [AGENTS.md](AGENTS.md) for wiki-first protocol rules (avoid spec drift) and [CLAUDE.md](CLAUDE.md) for architecture and conventions.
+See [AGENTS.md](AGENTS.md) for wiki-first protocol rules, architecture, and conventions.

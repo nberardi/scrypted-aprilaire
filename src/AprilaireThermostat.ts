@@ -421,18 +421,21 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
                 break;
         }
 
+        this.applyDeadbandToRequest(request, this.temperatureSetting.mode);
         this.client.write(request);
     }
 
     async setThermostatSetpointHigh(high: number): Promise<void> {
         let request = new ThermostatSetpointAndModeSettingsRequest();
         request.coolSetpoint = high;
+        this.applyDeadbandToRequest(request, this.temperatureSetting.mode);
         this.client.write(request);
     }
 
     async setThermostatSetpointLow(low: number): Promise<void> {
         let request = new ThermostatSetpointAndModeSettingsRequest();
         request.heatSetpoint = low;
+        this.applyDeadbandToRequest(request, this.temperatureSetting.mode);
         this.client.write(request);
     }
 
