@@ -91,7 +91,7 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
     }
 
     async setHumidity(_humidity: HumidityCommand) {
-        // Humidity writes belong on the humidifier/dehumidifier children.
+        this.console.error("setHumidity function should not have been called from the Thermostat object");
     }
 
     async setFan(fan: FanState): Promise<void> {
@@ -320,6 +320,11 @@ export class AprilaireThermostat extends AprilaireThermostatBase implements OnOf
             preserve = "cool";
 
         const result = enforceDeadband(heat, cool, this._deadbandC, preserve);
+        if (result.adjusted) {
+            this.console.info(
+                `deadband ${this._deadbandC}°C: adjusted setpoints heat ${heat}→${result.heatSetpoint}, cool ${cool}→${result.coolSetpoint} (preserve=${preserve})`
+            );
+        }
         request.heatSetpoint = result.heatSetpoint;
         request.coolSetpoint = result.coolSetpoint;
     }

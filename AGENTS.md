@@ -64,6 +64,8 @@ After you change wire behavior or coverage, update Codebase Mapping / Implementa
 
 This plugin talks to **real hardware** over TCP. Protocol-layer changes must preserve exact byte-level compatibility.
 
+Operational logs (`this.console` / `console.info` on the client) are for field debugging in Scrypted. Do **not** strip sensor readings, sensor-fault errors, name settlement, deadband adjustments, or installer-settings dumps as “bloat.” Leave periodic timer noise out (for example a warn on every 5-minute refresh).
+
 ## Build & development commands
 
 ```bash

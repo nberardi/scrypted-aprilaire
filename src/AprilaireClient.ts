@@ -170,8 +170,14 @@ export class AprilaireClient extends EventEmitter {
 
         else if (response instanceof ThermostatNameResponse) {
             const cleaned = sanitizeIdentificationText(response.name);
+            const location = sanitizeIdentificationText(response.postalCode);
+            console.info(
+                `ThermostatName attr=${response.attribute}: name="${cleaned}" location="${location}"`
+            );
             if (cleaned)
                 this.settleName(cleaned);
+            else
+                console.info(`ThermostatName attr=${response.attribute}: empty name`);
         }
 
         else if (response instanceof RevisionAndModelResponse) {
@@ -194,6 +200,8 @@ export class AprilaireClient extends EventEmitter {
             return;
 
         this.name = next;
+        if (prev !== next)
+            console.info(`thermostat name: "${prev ?? ""}" → "${next}" ready=${this.ready}`);
         if (this.ready && prev !== next)
             this.emit("name", this, prev);
     }
